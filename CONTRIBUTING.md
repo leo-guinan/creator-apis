@@ -2,9 +2,11 @@
 
 Creator APIs is the shared architecture for human-centered curiosity and downstream creation. Contributions should make the question-to-story flow easier to understand, implement, test, or extend while preserving provenance and human agency.
 
-## Current contribution boundary
+## License and contribution terms
 
-This repository is public but currently unlicensed. Public visibility does not grant permission to reuse, adapt, or redistribute its contents. Until licensing and contributor terms are established, open issues and discuss proposals; do not submit code or other material intended for incorporation into a distributed implementation.
+The current original repository material is dedicated under CC0 1.0 Universal; attribution is not required. By submitting a contribution, you agree to dedicate the contribution under CC0 1.0 Universal to the extent possible under law, and confirm that you have the rights needed to do so. Do not submit third-party, private, or archive material unless the necessary rights and permissions are already cleared.
+
+CC0 does not grant patent or trademark rights. Provenance and contributor rewards in deployed systems are separate from rights in this repository's architecture and code.
 
 ## What to propose
 

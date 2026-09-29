@@ -60,4 +60,6 @@ This repository begins as a public architecture draft. The documents describe th
 
 ## Reuse and contribution status
 
-The repository is public, but **it currently has no license**. Public visibility alone does not grant permission to reuse or redistribute its contents. A license and contributor terms are intentionally deferred; do not submit code intended for incorporation until those terms are established.
+The repository's current original architecture, specifications, examples, and documentation are dedicated to the public domain under **CC0 1.0 Universal**. Reuse, modification, and commercial application do not require attribution. The value is not ownership of the architecture; it is in deploying and applying it to build trust systems in the world.
+
+The product itself should still preserve provenance for human work used in real deployments so value can be directed to contributors. That is a property of the running system and its agreements, not a restriction on reusing this code or architecture. CC0 does not grant patent or trademark rights or clear rights held by third parties. See [`LICENSE`](LICENSE) and the [full CC0 legal code](https://creativecommons.org/publicdomain/zero/1.0/legalcode).
