@@ -1,0 +1,32 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*.json
+*secret*
+*token*
+
+# Local/private data and generated artifacts
+private/
+data/raw/
+outputs/
+*.sqlite
+*.db
+*.jsonl
+*.log
+
+# OS, editor, and caches
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+__pycache__/
+.pytest_cache/
+.venv/
+node_modules/
+dist/
+build/
