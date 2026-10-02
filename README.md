@@ -52,11 +52,12 @@ See:
 
 - [`docs/core-flow.md`](docs/core-flow.md) — the end-to-end question-to-story flow and its states.
 - [`docs/extension-contract.md`](docs/extension-contract.md) — the draft handoff boundary for downstream creative workflows, including movies.
+- [`implementations/python-mcp/README.md`](implementations/python-mcp/README.md) — the first local-only Python MCP reference implementation, including its calibration-gated profile contribution flow and verification limits.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to propose architecture and implementations.
 
 ## Architecture status
 
-This repository begins as a public architecture draft. The documents describe the intended system and seams; they do not assert that a complete knowledge graph, production curiosity engine, OpenAI-compatible endpoint, movie workflow, auction, or reward-settlement system is currently deployed. Each implementation must report what is tested, what is live, and what remains unknown.
+This repository remains a public architecture draft. A local Python MCP reference implementation now exists under [`implementations/python-mcp`](implementations/python-mcp/README.md); it demonstrates verified-email profiles, privacy-bounded self-reported contributions, and a calibrated-evaluation lock for owner-profile auto-delivery. It is not a deployed service, and client-reported evaluator results or lock phrases are not independently verified human consent. The documents describe the intended broader system; they do not assert that a complete knowledge graph, production curiosity engine, OpenAI-compatible endpoint, movie workflow, auction, or reward-settlement system is currently deployed. Each implementation must report what is tested, what is live, and what remains unknown.
 
 ## Reuse and contribution status
 

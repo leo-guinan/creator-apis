@@ -15,6 +15,9 @@ private/
 data/raw/
 outputs/
 *.sqlite
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 *.db
 *.jsonl
 *.log
@@ -30,3 +33,4 @@ __pycache__/
 node_modules/
 dist/
 build/
+*.egg-info/
