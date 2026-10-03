@@ -167,6 +167,9 @@ def test_verified_users_get_isolated_profiles_and_exactly_two_tools(tmp_path, mo
     expected = {
         "get_creator_apis_attribution_prompt",
         "submit_creator_apis_attribution_profile",
+        "create_student_referral_link",
+        "record_student_referral_event",
+        "get_student_referral_leaderboard",
     }
 
     assert first_profile != second_profile

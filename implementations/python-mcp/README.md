@@ -5,11 +5,13 @@ This is a local-first reference MCP service for enrolling verified-email profile
 ## What it implements
 
 - OAuth 2.0 Authorization Code + PKCE, profile-scoped tokens, and verified-email sign-in.
-- Exactly two ordinary-user MCP tools: get the profile prompt/evaluation state; create, calibrate, lock, pause, or use an evaluation to deliver a passing profile projection.
+- Five ordinary-user MCP tools: profile evaluation/prompt tools plus student referral-link creation, referral-event recording, and observed referral leaderboard readback.
 - A versioned, user-scoped evaluation policy. Calibration records contain only a sample SHA-256 digest, client-reported evaluator decision, user label, and bounded feedback tags—not the sample itself.
 - A one-time policy lock. Locking authorizes future passing projections to be delivered automatically to that authenticated profile; it does not authorize public posting, email, purchases, or other destinations. Pausing stops delivery; create and calibrate a new version to resume under a changed policy.
 - Daily event counts by date and self-reported category. Duplicate date/category rows are aggregated.
 - Validation excluding raw transcripts, personal contact fields in the profile projection, URLs, credentials, token counts, and spend.
+- Opaque student referral codes: student IDs are HMAC-digested, never stored raw, and produce a tracking redirect plus UTM-instrumented course link.
+- Idempotent referral event rail and competition readback at `/referrals/leaderboard`; events are labeled `observed_events_only`, not treated as unique people or settled revenue.
 
 A locked evaluation is a calibrated prediction of likely acceptance, not knowledge or certainty. The MCP service does not run an independent evaluator: criterion decisions and calibration labels are supplied by the client and marked client-reported. The server binds the report to the exact profile payload hash, computes the score, enforces the locked threshold and mandatory privacy/energy checks, and stores an evaluation receipt hash. A hash proves byte-level linkage, not that an evaluator ran honestly.
 
@@ -53,6 +55,8 @@ The service creates its SQLite tables at startup. The database path should be pr
 | `CREATORAPIS_MCP_ALLOWED_REDIRECT_URIS` | Comma-separated exact OAuth callback allowlist. |
 | `CREATORAPIS_MCP_EMAIL_RELAY_URL` | Authorized transactional email relay endpoint. |
 | `CREATORAPIS_MCP_EMAIL_RELAY_TOKEN` | Relay credential; keep it out of source, logs, and test fixtures. |
+| `CREATORAPIS_MCP_REFERRAL_KEY` | Required key of at least 32 bytes for student/referral HMACs. Keep it in protected runtime configuration; never commit it. |
+| `CREATORAPIS_MCP_REFERRAL_DESTINATION` | Approved course destination used by the tracking redirect; defaults to the Build in Public University course URL. |
 
 The test suite replaces the email send function with a mock and does not send email. To test actual login delivery, configure an authorized relay in a private environment; a relay acceptance is not proof of inbox delivery.
 
@@ -74,7 +78,20 @@ Configure an MCP client to use the server's Streamable HTTP endpoint:
 http://127.0.0.1:8000/mcp
 ```
 
-The endpoint requires OAuth authorization. `/setup` provides a local connection page; `/health` is only a health check and does not prove MCP compatibility. An integration test uses the official MCP Python SDK 1.x Streamable HTTP client against the FastAPI ASGI app, verifies initialization, lists exactly two tools, and calls the prompt tool. This exercises protocol behavior in-process; it does not verify a public network deployment, real email delivery, browser authorization, or compatibility with every AI client.
+The endpoint requires OAuth authorization. `/setup` provides a local connection page; `/health` is only a health check and does not prove MCP compatibility. An integration test uses the official MCP Python SDK 1.x Streamable HTTP client against the FastAPI ASGI app, verifies initialization, lists five tools, and calls the prompt tool. This exercises protocol behavior in-process; it does not verify a public network deployment, real email delivery, browser authorization, or compatibility with every AI client.
+
+## Student referral network
+
+An authenticated creator can call `create_student_referral_link` with a bounded student ID, label, approved course URL, source (`twitter`, `youtube`, `direct`, or `other`), and content slug. The response contains:
+
+- a random opaque `ref_...` referral code;
+- a direct course URL carrying `ref`, `utm_source`, `utm_medium=student-referral`, `utm_campaign`, and `utm_content`;
+- a `/r/<code>` tracking URL that records a click before redirecting;
+- a Markdown share snippet;
+- when `content` is supplied, `instrumented_content` with the destination URL replaced or a share snippet appended.
+The service never stores the raw student ID. It stores only an HMAC digest keyed by `CREATORAPIS_MCP_REFERRAL_KEY`. Downstream course instrumentation can POST `referral_code`, `event_name`, `source`, `content_slug`, and an optional opaque `event_id` to `/referrals/events`; duplicate event IDs are ignored. The supported event sequence is `click`, `qualified_visit`, `enrollment_start`, `enrollment`, and `recurring_conversion`.
+
+`get_student_referral_leaderboard` and `GET /referrals/leaderboard` compare observed events by student label. They do not claim unique visitors, causal lift, or settled revenue. Social posting is deliberately not automated: the tool creates and inserts the instrumented link into returned Markdown/URL material, while a creator or an explicitly authorized platform adapter decides where it is published.
 
 ## Verification
 

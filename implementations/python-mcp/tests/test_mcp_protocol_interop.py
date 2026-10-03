@@ -71,6 +71,9 @@ def test_official_mcp_client_initializes_lists_and_calls_tools(tmp_path, monkeyp
                     assert {tool.name for tool in tools.tools} == {
                         "get_creator_apis_attribution_prompt",
                         "submit_creator_apis_attribution_profile",
+                        "create_student_referral_link",
+                        "record_student_referral_event",
+                        "get_student_referral_leaderboard",
                     }
                     result = await session.call_tool("get_creator_apis_attribution_prompt", {})
                     assert result.isError is not True

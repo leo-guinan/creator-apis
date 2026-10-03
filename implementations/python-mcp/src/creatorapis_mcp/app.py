@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from .contributions import (
     ATTRIBUTION_PROMPT,
@@ -32,6 +32,13 @@ from .contributions import (
     get_routing_candidates as _get_routing_candidates,
 )
 from .email_login_page import render_email_signin_page
+from .referral_tools import handle_referral_tool
+from .referrals import (
+    destination_with_referral,
+    init_referral_tables,
+    leaderboard,
+    record_event,
+)
 from .setup_page import setup_page_response
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,11 +57,15 @@ RESOURCE_METADATA_URI = (
 )
 EMAIL_LINK_URI = f"{PUBLIC_BASE_URL}/oauth/email-link"
 OAUTH_SCOPES = {
-    "creator:tale.write": "Create a calibrated evaluation and deliver passing self-reported projections to your own isolated profile"
+    "creator:tale.write": "Create a calibrated evaluation and deliver passing self-reported projections to your own isolated profile",
+    "creator:referral.write": "Create owner-scoped student referral links and observe attributed funnel events",
 }
 TOOL_SCOPES = {
     "get_creator_apis_attribution_prompt": "creator:tale.write",
     "submit_creator_apis_attribution_profile": "creator:tale.write",
+    "create_student_referral_link": "creator:referral.write",
+    "record_student_referral_event": "creator:referral.write",
+    "get_student_referral_leaderboard": "creator:referral.write",
 }
 ALLOWED_REDIRECT_URIS = {
     uri.strip()
@@ -179,6 +190,57 @@ TOOLS = [
             "additionalProperties": False,
         },
     },
+    {
+        "name": "create_student_referral_link",
+        "description": "Create an opaque student referral code and an instrumented course link. The student ID is HMAC-digested and never returned or stored raw.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "student_id": {"type": "string"},
+                "label": {"type": "string"},
+                "destination_url": {"type": "string"},
+                "source": {"type": "string", "enum": ["direct", "twitter", "youtube", "other"]},
+                "content_slug": {"type": "string"},
+                "content": {"type": "string", "maxLength": 20000},
+            },
+            "required": ["student_id", "label", "destination_url", "source", "content_slug"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "record_student_referral_event",
+        "description": "Record a bounded attributed funnel event for a referral code. Duplicate event IDs are idempotent.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "referral_code": {"type": "string"},
+                "event_name": {
+                    "type": "string",
+                    "enum": [
+                        "click",
+                        "qualified_visit",
+                        "enrollment_start",
+                        "enrollment",
+                        "recurring_conversion",
+                    ],
+                },
+                "source": {"type": "string", "enum": ["direct", "twitter", "youtube", "other"]},
+                "content_slug": {"type": "string"},
+                "event_id": {"type": "string"},
+            },
+            "required": ["referral_code", "event_name", "source"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_student_referral_leaderboard",
+        "description": "Compare observed attributed referral events across students. Results are observed events only, not proof of unique people or settled revenue.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 366}},
+            "additionalProperties": False,
+        },
+    },
 ]
 
 
@@ -294,6 +356,7 @@ def init_store(path: Path | str | None = None) -> None:
             "CREATE INDEX IF NOT EXISTS idx_profile_memberships_user ON profile_memberships(user_id, revoked_at)"
         )
         init_attribution_tables(conn)
+        init_referral_tables(conn)
 
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -347,7 +410,12 @@ def _ensure_auth_account(conn: sqlite3.Connection, email_digest: str) -> tuple[s
         )
         conn.execute(
             "INSERT INTO profile_memberships(user_id,profile_id,scopes_json,created_at,revoked_at) VALUES(?,?,?,?,NULL)",
-            (user_id, profile_id, json.dumps(["creator:tale.write"]), stamp),
+            (
+                user_id,
+                profile_id,
+                json.dumps(["creator:tale.write", "creator:referral.write"]),
+                stamp,
+            ),
         )
         return user_id, profile_id
     memberships = conn.execute(
@@ -633,6 +701,45 @@ async def _handle(request: Request, payload: dict[str, Any]) -> Response:
         )
     elif name == "submit_creator_apis_attribution_profile":
         result = _submit_attribution_profile(arguments, auth.user_id, auth.profile_id)
+    elif name == "create_student_referral_link":
+        result = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        handle_referral_tool(
+                            db_path(), auth.profile_id, {"action": "create", **arguments}
+                        )
+                    ),
+                }
+            ]
+        }
+    elif name == "record_student_referral_event":
+        result = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        handle_referral_tool(
+                            db_path(), auth.profile_id, {"action": "event", **arguments}
+                        )
+                    ),
+                }
+            ]
+        }
+    elif name == "get_student_referral_leaderboard":
+        result = {
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps(
+                        handle_referral_tool(
+                            db_path(), auth.profile_id, {"action": "leaderboard", **arguments}
+                        )
+                    ),
+                }
+            ]
+        }
     else:
         return _rpc_error(request_id, -32602, "Unknown tool")
     return JSONResponse({"jsonrpc": "2.0", "id": request_id, "result": result})
@@ -1377,6 +1484,61 @@ async def oauth_revoke(request: Request) -> Response:
             (_utc_now(), _digest(token), client_id),
         )
     return Response(status_code=200, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/r/{referral_code}")
+def referral_redirect(referral_code: str, request: Request) -> Response:
+    source = request.query_params.get("source", "direct")
+    content = request.query_params.get("content", "shared-link")
+    destination = os.environ.get(
+        "CREATORAPIS_MCP_REFERRAL_DESTINATION", "https://course.buildinpublicuniversity.com/"
+    )
+    try:
+        with sqlite3.connect(db_path(), timeout=10) as conn:
+            init_referral_tables(conn)
+            record_event(conn, referral_code, "click", source, content)
+            conn.commit()
+        return RedirectResponse(
+            destination_with_referral(destination, referral_code, source, content), status_code=307
+        )
+    except ValueError:
+        return _json_error(404, "unknown_referral_code")
+    except RuntimeError:
+        return _json_error(503, "referral_key_not_configured")
+
+
+@app.post("/referrals/events")
+async def referral_event(request: Request) -> Response:
+    payload = await _read_json_limited(request, limit=2048)
+    if not isinstance(payload, dict):
+        return _json_error(400, "invalid_request")
+    try:
+        with sqlite3.connect(db_path(), timeout=10) as conn:
+            init_referral_tables(conn)
+            result = record_event(
+                conn,
+                payload.get("referral_code"),
+                payload.get("event_name"),
+                payload.get("source"),
+                payload.get("content_slug"),
+                payload.get("event_id"),
+            )
+            conn.commit()
+        return JSONResponse(
+            {"status": "accepted", **result, "claim_status": "observed_event_only"},
+            headers={"Cache-Control": "no-store"},
+        )
+    except ValueError as exc:
+        return _json_error(400, str(exc))
+    except RuntimeError:
+        return _json_error(503, "referral_key_not_configured")
+
+
+@app.get("/referrals/leaderboard")
+def referral_leaderboard(days: int = 30) -> dict[str, Any]:
+    init_store()
+    with sqlite3.connect(db_path(), timeout=10) as conn:
+        return {"status": "observed", "days": days, "rows": leaderboard(conn, days)}
 
 
 @app.get("/setup", response_class=HTMLResponse)
