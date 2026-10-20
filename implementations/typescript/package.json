@@ -1,0 +1,26 @@
+{
+  "name": "creatorapis-typescript",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Creator APIs TypeScript reference: shared contracts, creator press content, and payments (Stripe + Qi operator settlement).",
+  "type": "module",
+  "packageManager": "pnpm@8.15.9",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "validate": "pnpm typecheck && pnpm test",
+    "server": "tsx packages/payments/src/server.ts",
+    "bootstrap:stripe": "tsx scripts/bootstrap-stripe.ts",
+    "export:press": "tsx scripts/export-press.ts"
+  },
+  "dependencies": {
+    "stripe": "23.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "ajv": "8.17.1",
+    "ajv-formats": "3.0.1",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2"
+  }
+}

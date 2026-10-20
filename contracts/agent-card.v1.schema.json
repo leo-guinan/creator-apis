@@ -1,0 +1,315 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/leo-guinan/creator-apis/contracts/agent-card.v1.schema.json",
+  "title": "agent-card@1",
+  "description": "A portable agent (e.g. a reporter) that moves between creators and factories. The custody trail records each location, who moved it, and the card's content hash (sha256 of sorted-key JSON, excluding custody) on arrival.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "name",
+    "role",
+    "persona",
+    "origin",
+    "custody"
+  ],
+  "properties": {
+    "schema": {
+      "const": "agent-card@1"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{1,63}$"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string"
+    },
+    "role": {
+      "type": "string",
+      "minLength": 1
+    },
+    "persona": {
+      "type": "object",
+      "required": [
+        "summary"
+      ],
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "theoryOfWinning": {
+          "type": "string"
+        },
+        "voiceDirection": {
+          "type": "string"
+        },
+        "backstory": {
+          "type": "string"
+        },
+        "questioningStyle": {
+          "type": "string"
+        },
+        "beat": {
+          "type": "string"
+        },
+        "signatureQuestion": {
+          "type": "string"
+        }
+      }
+    },
+    "press": {
+      "type": "object",
+      "required": [
+        "lens",
+        "rights"
+      ],
+      "properties": {
+        "lens": {
+          "enum": [
+            "scoreboard",
+            "film",
+            "business",
+            "people",
+            "reproducibility",
+            "skeptic"
+          ]
+        },
+        "rights": {
+          "type": "object",
+          "required": [
+            "mayChallenge"
+          ],
+          "properties": {
+            "mayChallenge": {
+              "type": "boolean"
+            },
+            "challengesOthers": {
+              "type": "boolean"
+            },
+            "refusesUnevidencedWins": {
+              "type": "boolean"
+            }
+          }
+        },
+        "maxFollowups": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "questionsPerBeat": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "color": {
+          "type": "string"
+        }
+      }
+    },
+    "voiceProfiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "provider",
+          "key"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "assets": {
+      "type": "object",
+      "properties": {
+        "voices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "provider",
+              "uri",
+              "sha256",
+              "mime",
+              "createdAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "voice",
+                  "image"
+                ]
+              },
+              "provider": {
+                "type": "string"
+              },
+              "providerRef": {
+                "type": "string"
+              },
+              "uri": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "mime": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "receiptId": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "kind",
+              "provider",
+              "uri",
+              "sha256",
+              "mime",
+              "createdAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "voice",
+                  "image"
+                ]
+              },
+              "provider": {
+                "type": "string"
+              },
+              "providerRef": {
+                "type": "string"
+              },
+              "uri": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "mime": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "receiptId": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "origin": {
+      "type": "object",
+      "required": [
+        "creatorId",
+        "createdAt"
+      ],
+      "properties": {
+        "creatorId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    },
+    "custody": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "location",
+          "at",
+          "by",
+          "cardSha256"
+        ],
+        "properties": {
+          "location": {
+            "type": "string",
+            "pattern": "^(creator|factory):[A-Za-z0-9._-]+$"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "by": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string"
+          },
+          "cardSha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        }
+      }
+    }
+  },
+  "if": {
+    "properties": {
+      "role": {
+        "const": "reporter"
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "press"
+    ]
+  }
+}

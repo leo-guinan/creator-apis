@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/leo-guinan/creator-apis/contracts/press-corps.v1.schema.json",
+  "title": "press-corps@1",
+  "description": "A creator's press corps: reporter agent cards plus the run of show. Factories run it with their own evidence lenses.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "name",
+    "creatorId",
+    "reporters",
+    "beats"
+  ],
+  "properties": {
+    "schema": {
+      "const": "press-corps@1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "name": {
+      "type": "string"
+    },
+    "creatorId": {
+      "type": "string"
+    },
+    "reporters": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "agent-card.v1.schema.json"
+      }
+    },
+    "beats": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "minutes",
+          "reporters"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "statement",
+              "questions",
+              "commitments",
+              "final"
+            ]
+          },
+          "minutes": {
+            "type": "number",
+            "minimum": 0
+          },
+          "reporters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "defaultShot": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

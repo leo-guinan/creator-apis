@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/leo-guinan/creator-apis/contracts/operation-receipt.v1.schema.json",
+  "title": "operation-receipt@1",
+  "description": "What a factory operation did, what it cost, and how much energy it used, by evidence class. sha256 covers every other field (sorted-key JSON). hosting decides how it is paid: platform = metered compute billed to the creator; operator = energy reimbursed in Qi; provider = third-party API cost reimbursed in fiat.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "operation",
+    "factoryId",
+    "runId",
+    "status",
+    "operatorId",
+    "costUsd",
+    "energy",
+    "hosting",
+    "startedAt",
+    "finishedAt",
+    "sha256"
+  ],
+  "properties": {
+    "schema": {
+      "const": "operation-receipt@1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "operation": {
+      "type": "string"
+    },
+    "factoryId": {
+      "type": "string"
+    },
+    "runId": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "failed",
+        "rejected"
+      ]
+    },
+    "operatorId": {
+      "type": "string"
+    },
+    "creatorId": {
+      "type": "string"
+    },
+    "orderRef": {
+      "type": "string"
+    },
+    "artifact": {
+      "type": "object",
+      "required": [
+        "id",
+        "sha256",
+        "schema"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "costUsd": {
+      "type": "number",
+      "minimum": 0
+    },
+    "energy": {
+      "type": "object",
+      "required": [
+        "measuredWh",
+        "providerReportedWh",
+        "estimatedWh",
+        "unknownSteps",
+        "methods"
+      ],
+      "properties": {
+        "measuredWh": {
+          "type": "number",
+          "minimum": 0
+        },
+        "providerReportedWh": {
+          "type": "number",
+          "minimum": 0
+        },
+        "estimatedWh": {
+          "type": "number",
+          "minimum": 0
+        },
+        "unknownSteps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "hosting": {
+      "enum": [
+        "platform",
+        "operator",
+        "provider"
+      ]
+    },
+    "startedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "finishedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

@@ -34,3 +34,8 @@ node_modules/
 dist/
 build/
 *.egg-info/
+
+# TypeScript reference
+implementations/typescript/node_modules/
+implementations/typescript/data/
+implementations/typescript/.tmp-*/
