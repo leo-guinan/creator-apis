@@ -5,6 +5,7 @@ import type { EnergyQuote } from "./qi.js";
 import type { Delivery, RewardPeriod } from "./rewards.js";
 import type { ClusterCharter } from "../../contracts/src/index.js";
 import type { ClusterEpoch, Win } from "./clusters.js";
+import type { Commission, CommissionPool } from "./commissions.js";
 import type { LifecycleEpoch, Milestone, PressEvidence, ProvingRun, ProvingSet } from "./lifecycle.js";
 import type { MarginShare, SettlementLine, ToolRoyalty, Waterfall } from "./settlement.js";
 
@@ -49,10 +50,12 @@ export interface State {
   lifecycle: Record<string, LifecycleEpoch[]>;
   milestones: Milestone[];
   milestoneBurns: Record<string, { milestoneId: string; qiBase: number; status: "pending" | "confirmed"; txHash?: string }>;
+  commissionPools: Record<string, CommissionPool>;
+  commissions: Record<string, Commission>;
   journal: JournalEntry[];
 }
 
-const empty = (): State => ({ version: 1, creators: {}, payees: {}, offers: {}, orders: {}, receipts: {}, settlements: {}, payouts: {}, quotes: [], processedEvents: {}, deliveries: {}, rewardPeriods: [], charters: {}, clusterWins: {}, clusterEpochs: {}, clusterBurns: {}, provingSets: {}, provingRuns: {}, pressEvidence: {}, lifecycle: {}, milestones: [], milestoneBurns: {}, journal: [] });
+const empty = (): State => ({ version: 1, creators: {}, payees: {}, offers: {}, orders: {}, receipts: {}, settlements: {}, payouts: {}, quotes: [], processedEvents: {}, deliveries: {}, rewardPeriods: [], charters: {}, clusterWins: {}, clusterEpochs: {}, clusterBurns: {}, provingSets: {}, provingRuns: {}, pressEvidence: {}, lifecycle: {}, milestones: [], milestoneBurns: {}, commissionPools: {}, commissions: {}, journal: [] });
 
 /** One JSON file, written atomically after every mutation, so entities and the journal never disagree. A reference store, not a production database. */
 export class Store {

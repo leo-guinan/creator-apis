@@ -4,11 +4,11 @@ Three packages, one workspace:
 
 - **`packages/contracts`**: types, validators and canonical hashing for the shared contracts in [`/contracts`](../../contracts/README.md)
 - **`packages/press`**: creator press content (cast → agent cards → press corps), story templates, story packages with approval and consent
-- **`packages/payments`**: Stripe subscriptions, metered compute, customer checkout, Connect payouts, and Qi operator rewards from a time-based pool ([`docs/payments.md`](../../docs/payments.md), [`docs/operator-rewards.md`](../../docs/operator-rewards.md))
+- **`packages/payments`**: Stripe subscriptions, metered compute, customer checkout, Connect payouts, and Qi operator rewards from a time-based pool, and Qi commissions from miners ([`docs/payments.md`](../../docs/payments.md), [`docs/operator-rewards.md`](../../docs/operator-rewards.md), [`docs/music-video-factory.md`](../../docs/music-video-factory.md))
 
 ```bash
 pnpm install
-pnpm validate            # typecheck + 46 tests, no network
+pnpm validate            # typecheck + 54 tests, no network
 pnpm export:press        # regenerate creators/leo/press agent cards from cast.json
 pnpm bootstrap:stripe    # test-mode catalog: $20/month price, compute meter, metered price
 pnpm server              # local HTTP API on :8790

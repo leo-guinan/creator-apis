@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { stableHash, validateCharterAmendment, validateClusterCharter, validateReceipt, type ClusterCharter, type EnergySource, type OperationReceipt } from "../../contracts/src/index.js";
+import { centsToQiBase, DEFAULT_POOL, learningReport, priceCommission, sealCommission, validatePool, type Commission, type CommissionPool, type LearningReport } from "./commissions.js";
 import { closeClusterEpoch, type ClusterEpoch, type Phase } from "./clusters.js";
 import { closeLifecycleEpoch, lifecycleMetrics, sealProvingSet, type LifecycleEpoch, type Milestone, type PressEvidence, type ProvingRun, type ProvingSet } from "./lifecycle.js";
 import type { PaymentsGateway, WebhookEvent } from "./gateway.js";
@@ -550,6 +551,120 @@ export class CreatorPayments {
       completedOperationsPerKwh: energyByClass.measuredWh + energyByClass.providerReportedWh + energyByClass.estimatedWh > 0 ? receipts.filter((r) => r.status === "completed").length / ((energyByClass.measuredWh + energyByClass.providerReportedWh + energyByClass.estimatedWh) / 1000) : null
     };
   }
+
+  // ------------------------------------------------------------ commissions: miners pay a factory in Qi for one artifact
+
+  registerCommissionPool(p: Omit<CommissionPool, "createdAt" | keyof typeof DEFAULT_POOL> & Partial<Pick<CommissionPool, keyof typeof DEFAULT_POOL>>): CommissionPool {
+    const pool: CommissionPool = { ...DEFAULT_POOL, ...p, createdAt: this.nowIso() } as CommissionPool;
+    const e = validatePool(pool);
+    for (const id of [pool.operatorPayeeId, ...pool.miners.map((m) => m.payeeId)]) if (!this.s.payees[id]) e.push(`unknown payee ${id}`);
+    if (pool.clusterId && !this.s.charters[pool.clusterId]) e.push(`unknown cluster ${pool.clusterId}`);
+    const used = Object.values(this.s.commissions).some((c) => c.poolId === pool.id);
+    if (used && this.s.commissionPools[pool.id]) {
+      // Miners can join or change caps later; the price basis can't change under existing commissions.
+      const was = this.s.commissionPools[pool.id];
+      for (const k of ["factoryId", "operation", "operatorPayeeId", "baseline", "priorLearningRate", "minFitPoints"] as const) if (JSON.stringify(was[k]) !== JSON.stringify(pool[k])) e.push(`${k} can't change once the pool has commissions`);
+      pool.createdAt = was.createdAt;
+    }
+    if (e.length) throw new Error(`invalid commission pool ${p.id}: ${e.join("; ")}`);
+    return this.store.mutate((s) => (s.commissionPools[pool.id] = pool));
+  }
+
+  requestCommission(p: { id?: string; poolId: string; minerPayeeId: string; title: string; songRef?: string; requestedSeconds: number; notes?: string }): Commission {
+    const pool = this.mustPool(p.poolId);
+    this.expireCommissionQuotes();
+    const seat = pool.miners.find((m) => m.payeeId === p.minerPayeeId);
+    const e: string[] = [];
+    if (!seat) e.push(`${p.minerPayeeId} is not in pool ${pool.id}`);
+    if (!p.title?.trim()) e.push("title is required");
+    if (!(p.requestedSeconds >= pool.minSeconds && p.requestedSeconds <= pool.maxSeconds)) e.push(`requestedSeconds must be ${pool.minSeconds}..${pool.maxSeconds}`);
+    const open = Object.values(this.s.commissions).filter((c) => c.poolId === pool.id && c.minerPayeeId === p.minerPayeeId && ["quoted", "paid", "delivered"].includes(c.status)).length;
+    if (seat && open >= seat.maxOpen) e.push(`${p.minerPayeeId} already has ${open} open commission(s); the cap is ${seat.maxOpen}`);
+    const quote = this.latestQuote();
+    e.push(...validateQuote(quote, this.cfg.now(), this.cfg.quoteMaxAgeHours).map((x) => `Qi quote: ${x}`));
+    const id = p.id ?? `com_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    if (this.s.commissions[id]) e.push(`commission ${id} already exists`);
+    if (e.length) throw new Error(`can't quote commission: ${e.join("; ")}`);
+    const priced = priceCommission(pool, Object.values(this.s.commissions), p.requestedSeconds, quote!, this.cfg.now());
+    return this.store.mutate((s) => (s.commissions[id] = { id, poolId: pool.id, factoryId: pool.factoryId, minerPayeeId: p.minerPayeeId, brief: { title: p.title, songRef: p.songRef, requestedSeconds: p.requestedSeconds, notes: p.notes }, status: "quoted", ...priced }));
+  }
+
+  /** The miner's Qi transfer to the factory. Recorded from the tx hash; checking it on-chain is the caller's job for now. */
+  confirmCommissionPayment(id: string, p: { txHash: string; qiBase: number }): Commission {
+    this.expireCommissionQuotes();
+    const c = this.mustCommission(id);
+    if (c.status === "paid" && c.payment?.txHash === p.txHash) return c;
+    if (c.status !== "quoted") throw new Error(`commission ${id} is ${c.status}, not awaiting payment`);
+    if (!p.txHash?.trim()) throw new Error("txHash is required");
+    if (!Number.isInteger(p.qiBase) || p.qiBase < c.quote.qiBase) throw new Error(`payment of ${formatQi(p.qiBase)} is below the quote of ${formatQi(c.quote.qiBase)}`);
+    if (Object.values(this.s.commissions).some((x) => x.payment?.txHash === p.txHash)) throw new Error(`tx ${p.txHash} already paid another commission`);
+    return this.store.mutate((s) => {
+      const x = s.commissions[id];
+      x.status = "paid"; x.payment = { txHash: p.txHash, qiBase: p.qiBase, at: this.nowIso() };
+      this.store.post(s, { id: `commission-paid:${id}`, at: x.payment.at, kind: "commission_paid", refs: { commission: id, tx: p.txHash, miner: x.minerPayeeId }, postings: [{ account: `qi:wallet:${x.factoryId}`, currency: "qi_base", amount: p.qiBase }, { account: `commission:${id}`, currency: "qi_base", amount: -p.qiBase }] });
+      return x;
+    });
+  }
+
+  deliverCommission(id: string, d: { firstCutUnits: number; fixUnits: number; finishedSeconds: number; artifactRef: string; receiptIds?: string[] }): Commission {
+    const c = this.mustCommission(id);
+    if (c.status !== "paid") throw new Error(`commission ${id} is ${c.status}; only paid commissions can be delivered`);
+    const e: string[] = [];
+    for (const k of ["firstCutUnits", "fixUnits"] as const) if (!(Number.isFinite(d[k]) && d[k] >= 0)) e.push(`${k} must be a non-negative number`);
+    if (!(d.firstCutUnits + d.fixUnits > 0)) e.push("a delivery used some units");
+    if (!(d.finishedSeconds > 0)) e.push("finishedSeconds must be positive");
+    if (!d.artifactRef?.trim()) e.push("artifactRef is required");
+    for (const r of d.receiptIds ?? []) if (!this.s.receipts[r]) e.push(`unknown receipt ${r}`);
+    if (e.length) throw new Error(`invalid delivery for ${id}: ${e.join("; ")}`);
+    return this.store.mutate((s) => { const x = s.commissions[id]; x.status = "delivered"; x.delivery = { at: this.nowIso(), firstCutUnits: d.firstCutUnits, fixUnits: d.fixUnits, finishedSeconds: d.finishedSeconds, artifactRef: d.artifactRef, receiptIds: d.receiptIds ?? [] }; return x; });
+  }
+
+  /**
+   * The miner's verdict. Accepting earns the factory the Qi and adds a point to its learning curve. Rejecting needs a
+   * reason and refunds the pool's share. Either way the verdict is a customer-sourced delivery, so it counts toward
+   * the factory's rewards and lifecycle like any other.
+   */
+  decideCommission(id: string, p: { accepted: boolean; quality?: number; reason?: string }): Commission {
+    const c = this.mustCommission(id);
+    if (c.status === "accepted" || c.status === "rejected") throw new Error(`commission ${id} was already ${c.status}`);
+    if (c.status !== "delivered") throw new Error(`commission ${id} is ${c.status}; it has to be delivered first`);
+    if (p.accepted && !(typeof p.quality === "number" && p.quality >= 0 && p.quality <= 1)) throw new Error("accepting needs a quality score from 0 to 1");
+    if (!p.accepted && !p.reason?.trim()) throw new Error("rejecting needs a reason, so the factory can learn from it");
+    const pool = this.mustPool(c.poolId);
+    const at = this.nowIso();
+    this.recordDelivery({ id: `delivery:${id}`, factoryId: c.factoryId, operatorPayeeId: pool.operatorPayeeId, operation: pool.operation, submittedAt: c.payment!.at, deliveredAt: c.delivery!.at, accepted: p.accepted, quality: p.accepted ? p.quality! : (p.quality ?? 0), qualitySource: "customer", clusterId: pool.clusterId, inputHash: stableHash(c.brief), rejectionReason: p.accepted ? undefined : p.reason });
+    const paid = c.payment!.qiBase;
+    const refund = p.accepted ? 0 : Math.floor((paid * pool.rejectionRefundBps) / 10_000);
+    return this.store.mutate((s) => {
+      const x = s.commissions[id];
+      x.status = p.accepted ? "accepted" : "rejected";
+      x.decision = { at, accepted: p.accepted, quality: p.quality, reason: p.reason, refundQiBase: refund };
+      this.store.post(s, { id: `commission-decided:${id}`, at, kind: p.accepted ? "commission_accepted" : "commission_rejected", refs: { commission: id }, postings: [{ account: `commission:${id}`, currency: "qi_base", amount: paid }, ...(paid - refund ? [{ account: `earned_qi:${x.factoryId}`, currency: "qi_base" as const, amount: -(paid - refund) }] : []), ...(refund ? [{ account: `payable_qi:${x.minerPayeeId}`, currency: "qi_base" as const, amount: -refund }] : [])] });
+      return (s.commissions[id] = sealCommission(x));
+    });
+  }
+
+  confirmCommissionRefund(id: string, txHash: string): Commission {
+    const c = this.mustCommission(id);
+    if (c.status !== "rejected" || !c.decision?.refundQiBase) throw new Error(`commission ${id} has no refund owed`);
+    if (c.decision.refundTxHash) { if (c.decision.refundTxHash === txHash) return c; throw new Error(`refund for ${id} already confirmed with ${c.decision.refundTxHash}`); }
+    if (!txHash?.trim()) throw new Error("txHash is required");
+    return this.store.mutate((s) => {
+      const x = s.commissions[id];
+      x.decision!.refundTxHash = txHash;
+      this.store.post(s, { id: `commission-refund:${id}`, at: this.nowIso(), kind: "commission_refund", refs: { commission: id, tx: txHash }, postings: [{ account: `payable_qi:${x.minerPayeeId}`, currency: "qi_base", amount: x.decision!.refundQiBase }, { account: `qi:wallet:${x.factoryId}`, currency: "qi_base", amount: -x.decision!.refundQiBase }] });
+      return (s.commissions[id] = sealCommission(x));
+    });
+  }
+
+  learningReport(poolId: string): LearningReport { return learningReport(this.mustPool(poolId), Object.values(this.s.commissions)); }
+
+  private expireCommissionQuotes() {
+    const now = this.nowIso();
+    if (Object.values(this.s.commissions).some((c) => c.status === "quoted" && c.quote.validUntil < now)) this.store.mutate((s) => { for (const c of Object.values(s.commissions)) if (c.status === "quoted" && c.quote.validUntil < now) c.status = "expired"; });
+  }
+  private mustPool(id: string) { const p = this.s.commissionPools[id]; if (!p) throw new Error(`unknown commission pool ${id}`); return p; }
+  private mustCommission(id: string) { const c = this.s.commissions[id]; if (!c) throw new Error(`unknown commission ${id}`); return c; }
 
   // ------------------------------------------------------------ helpers
   private mustCreator(id: string) { const c = this.s.creators[id]; if (!c) throw new Error(`unknown creator ${id}`); return c; }

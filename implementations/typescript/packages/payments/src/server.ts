@@ -67,6 +67,14 @@ export function createPaymentsServer(payments: CreatorPayments, opts: ServerOpti
       if ((m = route.match(/^POST \/v1\/clusters\/([^/]+)\/close$/))) { const b = json(); return send(res, 200, payments.closeEpoch(m[1], b.epoch, { costCents: b.costCents })); }
       if ((m = route.match(/^GET \/v1\/clusters\/([^/]+)\/epochs\/([^/]+)\/agenda$/))) return send(res, 200, payments.ritualAgenda(m[1], decodeURIComponent(m[2])));
       if ((m = route.match(/^POST \/v1\/milestones\/([^/]+)\/burn$/))) return send(res, 200, payments.confirmMilestoneBurn(decodeURIComponent(m[1]), json().txHash));
+      if (route === "POST /v1/commission-pools") return send(res, 201, payments.registerCommissionPool(json()));
+      if ((m = route.match(/^GET \/v1\/commission-pools\/([^/]+)\/learning$/))) return send(res, 200, payments.learningReport(m[1]));
+      if (route === "POST /v1/commissions") return send(res, 201, payments.requestCommission(json()));
+      if ((m = route.match(/^GET \/v1\/commissions\/([^/]+)$/))) { const c = payments.store.state.commissions[decodeURIComponent(m[1])]; return c ? send(res, 200, c) : send(res, 404, { error: "no such commission" }); }
+      if ((m = route.match(/^POST \/v1\/commissions\/([^/]+)\/payment$/))) return send(res, 200, payments.confirmCommissionPayment(decodeURIComponent(m[1]), json()));
+      if ((m = route.match(/^POST \/v1\/commissions\/([^/]+)\/delivery$/))) return send(res, 200, payments.deliverCommission(decodeURIComponent(m[1]), json()));
+      if ((m = route.match(/^POST \/v1\/commissions\/([^/]+)\/decision$/))) return send(res, 200, payments.decideCommission(decodeURIComponent(m[1]), json()));
+      if ((m = route.match(/^POST \/v1\/commissions\/([^/]+)\/refund$/))) return send(res, 200, payments.confirmCommissionRefund(decodeURIComponent(m[1]), json().txHash));
       if (route === "GET /v1/ledger/balances") return send(res, 200, payments.store.balances(url.searchParams.get("prefix") ?? ""));
       return send(res, 404, { error: "not found" });
     } catch (error) {
