@@ -11,7 +11,8 @@
     "validate": "pnpm typecheck && pnpm test",
     "server": "tsx packages/payments/src/server.ts",
     "bootstrap:stripe": "tsx scripts/bootstrap-stripe.ts",
-    "export:press": "tsx scripts/export-press.ts"
+    "export:press": "tsx scripts/export-press.ts",
+    "create:support-link": "tsx scripts/create-support-link.ts"
   },
   "dependencies": {
     "stripe": "23.0.0"
