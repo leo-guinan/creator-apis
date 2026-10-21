@@ -34,16 +34,16 @@ test("the committed music video pool is valid and its baseline is ALL GREEN at $
   assert.equal(Math.round((committed.baseline.units * committed.tool.usdCents) / committed.tool.units), 6400);
 });
 
-test("the first quote is the $40 projection, priced in Qi at the sourced rate", async () => {
+test("the first quote is the $40 projection, priced in Qi at the sourced rate; the minimum stake adds the 10% margin", async () => {
   const { payments, quote, pool } = await setup();
   quote(0.05);
   const c = payments.requestCommission({ poolId: pool.id, minerPayeeId: "miner:rig", title: "first commission", requestedSeconds: 143.6 });
-  assert.deepEqual([c.projection.basis, c.projection.n, c.quote.units, c.quote.usdCents, c.quote.qiBase], ["prior", 2, 1440, 4000, 800_000]);
+  assert.deepEqual([c.pricing, c.projection.basis, c.projection.n, c.quote.units, c.quote.usdCents, c.quote.costQiBase, c.quote.marginQiBase, c.quote.qiBase], ["stake", "prior", 2, 1440, 4000, 800_000, 80_000, 880_000]);
   assert.match(c.quote.energyQuoteId, /^quote_/);
 });
 
 test("pay → deliver → accept: Qi held, then earned; the verdict counts as a customer delivery", async () => {
-  const { payments, make } = await setup();
+  const { payments, make } = await setup({ pricing: "fixed_quote" });
   const c = make({ units: [1100, 250], usdPerQi: 0.05 });
   assert.equal(c.status, "accepted");
   assert.ok(commissionHashValid(c));
@@ -91,7 +91,7 @@ test("the curve is fitted from accepted work only; a rejection is a note, not a 
 });
 
 test("a rejection refunds the miner's share and the refund is confirmed by tx", async () => {
-  const { payments, make } = await setup({ rejectionRefundBps: 5000 });
+  const { payments, make } = await setup({ pricing: "fixed_quote", rejectionRefundBps: 5000 });
   const c = make({ units: [1500, 0], accept: false, usdPerQi: 0.05 });
   assert.equal(c.decision!.refundQiBase, 400_000);
   assert.equal(payments.store.balances()["payable_qi:miner:farm|qi_base"], -400_000);
@@ -127,10 +127,58 @@ test("guards: pool membership, open caps, stale Qi quotes, short payments, reuse
 test("projection math: the prior gives $40 next, then the fit takes over and clamps wild swings", () => {
   const pool = { ...committed, createdAt: "x" } as CommissionPool;
   assert.ok(Math.abs(project(pool, []).unitsPerSecond * 143.6 - 1440) < 1e-6);
-  const accepted = (i: number, units: number): Commission => ({ id: `c${i}`, poolId: pool.id, factoryId: "music-video", minerPayeeId: "miner:rig", brief: { title: "x", requestedSeconds: 100 }, status: "accepted", projection: project(pool, []), quote: { units, usdCents: 0, qiBase: 1000, usdPerQi: 1, energyQuoteId: "q", tool: pool.tool, validUntil: "", at: "" }, delivery: { at: "", firstCutUnits: units, fixUnits: 0, finishedSeconds: 100, artifactRef: "r", receiptIds: [] }, decision: { at: `2026-10-2${i}`, accepted: true, refundQiBase: 0 } });
+  const accepted = (i: number, units: number): Commission => ({ id: `c${i}`, poolId: pool.id, factoryId: "music-video", minerPayeeId: "miner:rig", brief: { title: "x", requestedSeconds: 100 }, status: "accepted", projection: project(pool, []), pricing: "fixed_quote", quote: { units, usdCents: 0, costQiBase: 1000, marginQiBase: 0, qiBase: 1000, usdPerQi: 1, energyQuoteId: "q", tool: pool.tool, validUntil: "", at: "" }, delivery: { at: "", firstCutUnits: units, fixUnits: 0, finishedSeconds: 100, artifactRef: "r", receiptIds: [] }, decision: { at: `2026-10-2${i}`, accepted: true, refundQiBase: 0 } });
   // A factory that suddenly needs almost nothing: the slope is clamped at b = 1.5.
   const p = project(pool, [accepted(1, 100), accepted(2, 1)]);
   assert.equal(p.basis, "fit");
   assert.ok(p.learningRate >= 2 ** -1.5 - 1e-12);
   assert.equal(learningReport(pool, [accepted(1, 1000)]).rows.length, 2);
+});
+
+test("stake: actual cost + 10% of the projection is taken, the rest returned; beating the projection doesn't shrink the margin", async () => {
+  const { payments, quote, pool, tick } = await setup();
+  quote(0.05);
+  const c = payments.requestCommission({ poolId: pool.id, minerPayeeId: "miner:rig", title: "staked", requestedSeconds: 143.6 });
+  payments.confirmCommissionPayment(c.id, { txHash: "0xstake", qiBase: 1_000_000 });
+  assert.deepEqual(payments.learningReport(pool.id).float, { openCommissions: 1, qiBase: 1_000_000 }, "the open stake is float");
+  tick(24);
+  payments.deliverCommission(c.id, { firstCutUnits: 1100, fixUnits: 250, finishedSeconds: 143.6, artifactRef: "render:s" });
+  const done = payments.decideCommission(c.id, { accepted: true, quality: 0.9 });
+  // 1,350 credits = $37.50 = 750 Qi cost; margin = 10% of the 800 Qi projection = 80 Qi; 170 Qi comes back.
+  assert.deepEqual(done.decision!.settlement, { costQiBase: 750_000, marginQiBase: 80_000, chargedQiBase: 830_000, shortfallQiBase: 0, remainderQiBase: 170_000, remainder: "return" });
+  const b = payments.store.balances();
+  assert.equal(b["earned_qi:music-video|qi_base"], -830_000);
+  assert.equal(b["payable_qi:miner:rig|qi_base"], -170_000);
+  payments.confirmCommissionRefund(c.id, "0xreturn");
+  assert.equal(payments.store.balances()["qi:wallet:music-video|qi_base"], 830_000);
+  const r = payments.learningReport(pool.id);
+  assert.deepEqual(r.float, { openCommissions: 0, qiBase: 0 });
+  assert.deepEqual(r.stakes, { staked: 1_000_000, charged: 830_000, margin: 80_000, returned: 170_000, burned: 0, shortfall: 0 });
+  assert.equal(r.rows[1].qiPerSecond, 830 / 143.6, "miners pay actual cost plus margin, so Qi per second tracks skill directly");
+});
+
+test("stake: the miner can burn the remainder; rejections charge cost only; overruns stop at the stake", async () => {
+  const { payments, quote, pool, tick } = await setup();
+  const run = (p: { stake: number; units: number; accept: boolean; remainder?: "return" | "burn"; tx: string }) => {
+    quote(0.05);
+    const c = payments.requestCommission({ poolId: pool.id, minerPayeeId: "miner:farm", title: p.tx, requestedSeconds: 143.6 });
+    payments.confirmCommissionPayment(c.id, { txHash: p.tx, qiBase: p.stake, remainder: p.remainder });
+    tick(1);
+    payments.deliverCommission(c.id, { firstCutUnits: p.units, fixUnits: 0, finishedSeconds: 143.6, artifactRef: p.tx });
+    return payments.decideCommission(c.id, p.accept ? { accepted: true, quality: 0.8 } : { accepted: false, reason: "wrong mood" });
+  };
+  const burned = run({ stake: 1_000_000, units: 1080, accept: true, remainder: "burn", tx: "0xb" }); // $30 = 600 Qi + 80 margin
+  assert.deepEqual([burned.decision!.burnQiBase, burned.decision!.refundQiBase], [320_000, 0]);
+  assert.throws(() => payments.confirmCommissionRefund(burned.id, "0x"), /no refund owed/);
+  payments.confirmCommissionBurn(burned.id, "0xburn");
+  assert.equal(payments.store.balances()["burn_qi:music-video|qi_base"] ?? 0, 0);
+  const rejected = run({ stake: 900_000, units: 1080, accept: false, tx: "0xr" });
+  assert.deepEqual([rejected.decision!.settlement!.marginQiBase, rejected.decision!.settlement!.chargedQiBase, rejected.decision!.refundQiBase], [0, 600_000, 300_000]);
+  const over = run({ stake: 880_000, units: 2160, accept: true, tx: "0xo" }); // 1,200 Qi cost + margin against an 880 stake
+  // The curve has moved, so the margin is 10% of this quote's lower projection, not 80 Qi.
+  assert.ok(over.quote.marginQiBase < 80_000);
+  assert.deepEqual([over.decision!.settlement!.chargedQiBase, over.decision!.settlement!.shortfallQiBase, over.decision!.settlement!.remainderQiBase], [880_000, 1_200_000 + over.quote.marginQiBase - 880_000, 0]);
+  assert.throws(() => payments.confirmCommissionPayment(payments.requestCommission({ poolId: pool.id, minerPayeeId: "miner:farm", title: "low", requestedSeconds: 143.6 }).id, { txHash: "0xlow", qiBase: 800_000 }), /below the quote/);
+  const total = Object.values(payments.store.balances()).reduce((a, v) => a + v, 0);
+  assert.equal(total, 0, "the Qi ledger balances");
 });

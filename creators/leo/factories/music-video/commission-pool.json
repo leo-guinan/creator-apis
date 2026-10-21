@@ -21,6 +21,13 @@
   "priorLearningRate": 0.625,
   "minFitPoints": 3,
   "maxFixRatio": 0.25,
+  "pricing": "stake",
+  "stake": {
+    "marginBps": 1000,
+    "marginBasis": "projected",
+    "rejectedCostShareBps": 10000,
+    "defaultRemainder": "return"
+  },
   "rejectionRefundBps": 10000,
   "minSeconds": 30,
   "maxSeconds": 300,

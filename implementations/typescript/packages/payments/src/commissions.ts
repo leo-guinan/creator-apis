@@ -11,8 +11,14 @@ import { QI_BASE_PER_QI, type EnergyQuote } from "./qi.js";
  *   3. Qi price: USD per Qi, from a sourced, timestamped quote
  * Qi per finished second = units/s × USD/unit ÷ USD/Qi, so the log change splits exactly into those three terms.
  *
- * Pricing is a fixed quote: the miner pays the projected cost, the factory keeps any under-run and absorbs any
- * over-run. That rewards the factory for beating its own projection, and each accepted delivery moves the projection.
+ * Two pricing modes:
+ *  - fixed_quote: the miner pays the projected cost; the factory keeps any under-run and absorbs any over-run.
+ *  - stake: the miner stakes Qi up to a ceiling. At the verdict the factory takes actual cost plus a margin, and
+ *    the rest of the stake is returned or burned, as the miner chose when staking. The margin is a share of the
+ *    projected cost by default, not the actual cost: a margin on actual cost would shrink every time the factory
+ *    got better, which pays it to stay slow. A rejected attempt charges cost only (by default), so miners fund the
+ *    factory's learning without paying it a profit on failures.
+ * Open stakes are the pool's float: Qi committed to future work and held until a verdict releases it.
  */
 
 export interface ToolPrice {
@@ -49,13 +55,41 @@ export interface CommissionPool {
   minFitPoints: number;
   /** Fixes as a share of the first cut: the factory's process target, reported on every delivery. */
   maxFixRatio?: number;
-  /** Share of the Qi refunded when a miner rejects with a reason. The rest pays for the attempt. */
+  pricing: "fixed_quote" | "stake";
+  /** fixed_quote only: share of the Qi refunded when a miner rejects with a reason. The rest pays for the attempt. */
   rejectionRefundBps: number;
+  /** stake only. */
+  stake?: StakeTerms;
   minSeconds: number;
   maxSeconds: number;
   quoteValidHours: number;
   clusterId?: string;
   createdAt: string;
+}
+
+export interface StakeTerms {
+  /** Margin on top of cost, in basis points (1000 = 10%). */
+  marginBps: number;
+  /** "projected": margin on the projected cost at staking (default). "actual": margin on actual cost. */
+  marginBasis: "projected" | "actual";
+  /** Share of actual cost charged when the miner rejects (with a reason). No margin on rejections. */
+  rejectedCostShareBps: number;
+  /** What happens to unused stake when the miner doesn't say. */
+  defaultRemainder: Remainder;
+}
+export type Remainder = "return" | "burn";
+export const DEFAULT_STAKE: StakeTerms = { marginBps: 1000, marginBasis: "projected", rejectedCostShareBps: 10_000, defaultRemainder: "return" };
+
+export interface StakeSettlement {
+  /** Actual units converted at the tool price and the Qi rate locked when the job was quoted. */
+  costQiBase: number;
+  marginQiBase: number;
+  /** min(stake, cost + margin). */
+  chargedQiBase: number;
+  /** cost + margin that the stake didn't cover; the factory absorbs it. */
+  shortfallQiBase: number;
+  remainderQiBase: number;
+  remainder: Remainder;
 }
 
 export type CommissionStatus = "quoted" | "paid" | "delivered" | "accepted" | "rejected" | "expired";
@@ -77,14 +111,16 @@ export interface Commission {
   brief: { title: string; songRef?: string; requestedSeconds: number; notes?: string };
   status: CommissionStatus;
   projection: Projection;
-  quote: { units: number; usdCents: number; qiBase: number; usdPerQi: number; energyQuoteId: string; tool: ToolPrice; validUntil: string; at: string };
-  payment?: { txHash: string; qiBase: number; at: string };
+  /** `qiBase` is what the miner must send: the price (fixed_quote) or the minimum stake, projected cost + margin (stake). */
+  quote: { units: number; usdCents: number; costQiBase: number; marginQiBase: number; qiBase: number; usdPerQi: number; energyQuoteId: string; tool: ToolPrice; validUntil: string; at: string };
+  pricing: CommissionPool["pricing"];
+  payment?: { txHash: string; qiBase: number; at: string; remainder?: Remainder };
   delivery?: { at: string; firstCutUnits: number; fixUnits: number; finishedSeconds: number; artifactRef: string; receiptIds: string[] };
-  decision?: { at: string; accepted: boolean; quality?: number; reason?: string; refundQiBase: number; refundTxHash?: string };
+  decision?: { at: string; accepted: boolean; quality?: number; reason?: string; refundQiBase: number; refundTxHash?: string; burnQiBase?: number; burnTxHash?: string; settlement?: StakeSettlement };
   sha256?: string;
 }
 
-export const DEFAULT_POOL = { priorLearningRate: 0.625, minFitPoints: 3, rejectionRefundBps: 10_000, minSeconds: 30, maxSeconds: 300, quoteValidHours: 24 } as const;
+export const DEFAULT_POOL = { pricing: "fixed_quote" as const, priorLearningRate: 0.625, minFitPoints: 3, rejectionRefundBps: 10_000, minSeconds: 30, maxSeconds: 300, quoteValidHours: 24 } as const;
 
 export function validatePool(p: CommissionPool): string[] {
   const e: string[] = [];
@@ -99,6 +135,17 @@ export function validatePool(p: CommissionPool): string[] {
   if (!Number.isInteger(p.rejectionRefundBps) || p.rejectionRefundBps < 0 || p.rejectionRefundBps > 10_000) e.push("rejectionRefundBps must be 0..10000");
   if (!(p.minSeconds > 0 && p.maxSeconds >= p.minSeconds)) e.push("minSeconds and maxSeconds must be positive and in order");
   if (!(p.quoteValidHours > 0)) e.push("quoteValidHours must be positive");
+  if (p.pricing !== "fixed_quote" && p.pricing !== "stake") e.push("pricing must be fixed_quote or stake");
+  if (p.pricing === "stake") {
+    const t = p.stake;
+    if (!t) e.push("stake pricing needs stake terms");
+    else {
+      if (!Number.isInteger(t.marginBps) || t.marginBps < 0 || t.marginBps > 10_000) e.push("stake.marginBps must be 0..10000");
+      if (t.marginBasis !== "projected" && t.marginBasis !== "actual") e.push("stake.marginBasis must be projected or actual");
+      if (!Number.isInteger(t.rejectedCostShareBps) || t.rejectedCostShareBps < 0 || t.rejectedCostShareBps > 10_000) e.push("stake.rejectedCostShareBps must be 0..10000");
+      if (t.defaultRemainder !== "return" && t.defaultRemainder !== "burn") e.push("stake.defaultRemainder must be return or burn");
+    }
+  }
   if (p.maxFixRatio !== undefined && !(p.maxFixRatio >= 0)) e.push("maxFixRatio must be non-negative");
   return e;
 }
@@ -138,7 +185,19 @@ export function priceCommission(pool: CommissionPool, commissions: Commission[],
   // The epsilon keeps float noise (1440.0000000002) from adding a whole unit.
   const units = Math.ceil(projection.unitsPerSecond * seconds - 1e-9);
   const usdCents = unitsToCents(units, pool.tool);
-  return { projection, quote: { units, usdCents, qiBase: centsToQiBase(usdCents, quote.usdPerQi), usdPerQi: quote.usdPerQi, energyQuoteId: quote.id, tool: { ...pool.tool }, validUntil: new Date(now.getTime() + pool.quoteValidHours * 3_600_000).toISOString(), at: now.toISOString() } };
+  const costQiBase = centsToQiBase(usdCents, quote.usdPerQi);
+  const marginQiBase = pool.pricing === "stake" ? Math.floor((costQiBase * pool.stake!.marginBps) / 10_000) : 0;
+  return { projection, pricing: pool.pricing, quote: { units, usdCents, costQiBase, marginQiBase, qiBase: costQiBase + marginQiBase, usdPerQi: quote.usdPerQi, energyQuoteId: quote.id, tool: { ...pool.tool }, validUntil: new Date(now.getTime() + pool.quoteValidHours * 3_600_000).toISOString(), at: now.toISOString() } };
+}
+
+/** Stake mode: what the factory takes from the stake, and what's left to return or burn. */
+export function settleStake(pool: CommissionPool, c: Commission, accepted: boolean): StakeSettlement {
+  const t = pool.stake!, d = c.delivery!, stake = c.payment!.qiBase;
+  const costQiBase = centsToQiBase(unitsToCents(d.firstCutUnits + d.fixUnits, c.quote.tool), c.quote.usdPerQi);
+  const owedCost = accepted ? costQiBase : Math.floor((costQiBase * t.rejectedCostShareBps) / 10_000);
+  const marginQiBase = accepted ? Math.floor(((t.marginBasis === "projected" ? c.quote.costQiBase : costQiBase) * t.marginBps) / 10_000) : 0;
+  const chargedQiBase = Math.min(stake, owedCost + marginQiBase);
+  return { costQiBase, marginQiBase, chargedQiBase, shortfallQiBase: owedCost + marginQiBase - chargedQiBase, remainderQiBase: stake - chargedQiBase, remainder: c.payment!.remainder ?? t.defaultRemainder };
 }
 
 export const sealCommission = (c: Commission): Commission => { const { sha256: _drop, ...body } = c; return { ...c, sha256: stableHash(body) }; };
@@ -148,11 +207,14 @@ export interface CurveRow {
   n: number;
   ref: string;
   title: string;
+  pricing?: CommissionPool["pricing"];
   finishedSeconds: number;
+  /** Stake mode: the factory's margin on this video. */
+  marginQiBase?: number;
   /** What the factory actually used, per finished second. This is the skill measure. */
   unitsPerSecond: number;
   usdPerSecond: number;
-  /** What the miner paid in Qi per finished second (the fixed quote, spread over the delivered length). */
+  /** What the miner paid in Qi per finished second: the fixed quote, or the stake's charge (cost + margin). */
   qiPerSecond?: number;
   quotedUnits?: number;
   actualUnits: number;
@@ -160,7 +222,7 @@ export interface CurveRow {
   underRunUnits?: number;
   fixRatio?: number;
   meetsFixTarget?: boolean;
-  /** Log change in Qi/s from the previous paid row, split into its three causes. Sums to `total`. */
+  /** Log change in cost-in-Qi per second from the previous row, split into its three causes. Sums to `total`. */
   change?: { total: number; skill: number; toolPrice: number; qiPrice: number };
 }
 
@@ -174,6 +236,10 @@ export interface LearningReport {
   /** Across all paid commissions: how much of the drop in Qi per second came from skill, tool price and Qi price. */
   cumulative?: { qiPerSecondFirst: number; qiPerSecondLast: number; total: number; skill: number; toolPrice: number; qiPrice: number };
   skillVsBaseline: number;
+  /** Qi staked on commissions that haven't had a verdict yet: committed to work, held until released. */
+  float: { openCommissions: number; qiBase: number };
+  /** Stake mode totals over decided commissions. */
+  stakes?: { staked: number; charged: number; margin: number; returned: number; burned: number; shortfall: number };
   notes: string[];
   sha256: string;
 }
@@ -190,19 +256,22 @@ export function learningReport(pool: CommissionPool, commissions: Commission[]):
   accepted.forEach((c, i) => {
     const d = c.delivery!, actual = d.firstCutUnits + d.fixUnits, ups = actual / d.finishedSeconds;
     const cpu = c.quote.tool.usdCents / c.quote.tool.units;
-    const qps = c.quote.qiBase / QI_BASE_PER_QI / d.finishedSeconds;
-    const quotedUps = c.quote.units / d.finishedSeconds;
-    const row: CurveRow = { n: i + 2, ref: c.id, title: c.brief.title, finishedSeconds: d.finishedSeconds, unitsPerSecond: ups, usdPerSecond: (actual * cpu) / 100 / d.finishedSeconds, qiPerSecond: qps, quotedUnits: c.quote.units, actualUnits: actual, underRunUnits: c.quote.units - actual, fixRatio: d.firstCutUnits > 0 ? d.fixUnits / d.firstCutUnits : undefined };
+    const paidQi = c.decision!.settlement ? c.decision!.settlement.chargedQiBase : c.quote.qiBase;
+    const qps = paidQi / QI_BASE_PER_QI / d.finishedSeconds;
+    // What drives the miner's price: quoted units under a fixed quote, actual units under a stake.
+    const basisUps = (c.pricing === "stake" ? actual : c.quote.units) / d.finishedSeconds;
+    const row: CurveRow = { n: i + 2, ref: c.id, title: c.brief.title, pricing: c.pricing, finishedSeconds: d.finishedSeconds, unitsPerSecond: ups, marginQiBase: c.decision!.settlement?.marginQiBase ?? 0, usdPerSecond: (actual * cpu) / 100 / d.finishedSeconds, qiPerSecond: qps, quotedUnits: c.quote.units, actualUnits: actual, underRunUnits: c.quote.units - actual, fixRatio: d.firstCutUnits > 0 ? d.fixUnits / d.firstCutUnits : undefined };
     if (pool.maxFixRatio !== undefined && row.fixRatio !== undefined) row.meetsFixTarget = row.fixRatio <= pool.maxFixRatio;
-    // The Qi a miner pays follows the quoted units, so the skill term uses quoted units per second: that is the
-    // skill the factory had demonstrated when it priced the job. The actual units feed the next projection.
-    const cur = { qps, ups: quotedUps, cpu, upq: c.quote.usdPerQi };
+    // The split runs on cost (units × USD/unit ÷ USD/Qi), so it is exact; the margin is reported beside it.
+    const cur = { qps: (basisUps * cpu) / 100 / c.quote.usdPerQi, ups: basisUps, cpu, upq: c.quote.usdPerQi };
     if (prev) row.change = split(prev, cur);
     prev = cur; first ??= cur;
     rows.push(row);
   });
   const next = project(pool, mine);
   const notes: string[] = [];
+  const open = mine.filter((c) => (c.status === "paid" || c.status === "delivered") && c.payment);
+  const settled = mine.filter((c) => c.decision?.settlement);
   if (next.basis === "prior") notes.push(`quotes use the prior learning rate (${pool.priorLearningRate}) until ${pool.minFitPoints} accepted points exist; ${next.points} so far, baseline included`);
   const rejected = mine.filter((c) => c.status === "rejected");
   if (rejected.length) notes.push(`${rejected.length} rejected: ${rejected.map((c) => `${c.id} (${c.decision?.reason ?? "no reason"})`).join(", ")}; rejected work is not a point on the curve`);
@@ -211,6 +280,8 @@ export function learningReport(pool: CommissionPool, commissions: Commission[]):
     next: { ...next, usdPerSecond: (next.unitsPerSecond * perUnitCents) / 100 },
     cumulative: first && prev && first !== prev ? { qiPerSecondFirst: first.qps, qiPerSecondLast: prev.qps, ...split(first, prev) } : undefined,
     skillVsBaseline: rows.at(-1)!.unitsPerSecond / rows[0].unitsPerSecond,
+    float: { openCommissions: open.length, qiBase: open.reduce((t, c) => t + c.payment!.qiBase, 0) },
+    stakes: settled.length ? settled.reduce((t, c) => { const x = c.decision!.settlement!; t.staked += c.payment!.qiBase; t.charged += x.chargedQiBase; t.margin += Math.min(x.marginQiBase, x.chargedQiBase); t[x.remainder === "burn" ? "burned" : "returned"] += x.remainderQiBase; t.shortfall += x.shortfallQiBase; return t; }, { staked: 0, charged: 0, margin: 0, returned: 0, burned: 0, shortfall: 0 }) : undefined,
     notes
   };
   return { ...report, sha256: stableHash(report) };

@@ -75,6 +75,7 @@ export function createPaymentsServer(payments: CreatorPayments, opts: ServerOpti
       if ((m = route.match(/^POST \/v1\/commissions\/([^/]+)\/delivery$/))) return send(res, 200, payments.deliverCommission(decodeURIComponent(m[1]), json()));
       if ((m = route.match(/^POST \/v1\/commissions\/([^/]+)\/decision$/))) return send(res, 200, payments.decideCommission(decodeURIComponent(m[1]), json()));
       if ((m = route.match(/^POST \/v1\/commissions\/([^/]+)\/refund$/))) return send(res, 200, payments.confirmCommissionRefund(decodeURIComponent(m[1]), json().txHash));
+      if ((m = route.match(/^POST \/v1\/commissions\/([^/]+)\/burn$/))) return send(res, 200, payments.confirmCommissionBurn(decodeURIComponent(m[1]), json().txHash));
       if (route === "GET /v1/ledger/balances") return send(res, 200, payments.store.balances(url.searchParams.get("prefix") ?? ""));
       return send(res, 404, { error: "not found" });
     } catch (error) {

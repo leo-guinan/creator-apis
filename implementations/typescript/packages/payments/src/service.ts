@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { stableHash, validateCharterAmendment, validateClusterCharter, validateReceipt, type ClusterCharter, type EnergySource, type OperationReceipt } from "../../contracts/src/index.js";
-import { centsToQiBase, DEFAULT_POOL, learningReport, priceCommission, sealCommission, validatePool, type Commission, type CommissionPool, type LearningReport } from "./commissions.js";
+import { DEFAULT_POOL, DEFAULT_STAKE, learningReport, priceCommission, sealCommission, settleStake, validatePool, type Remainder, type Commission, type CommissionPool, type LearningReport } from "./commissions.js";
 import { closeClusterEpoch, type ClusterEpoch, type Phase } from "./clusters.js";
 import { closeLifecycleEpoch, lifecycleMetrics, sealProvingSet, type LifecycleEpoch, type Milestone, type PressEvidence, type ProvingRun, type ProvingSet } from "./lifecycle.js";
 import type { PaymentsGateway, WebhookEvent } from "./gateway.js";
@@ -556,6 +556,7 @@ export class CreatorPayments {
 
   registerCommissionPool(p: Omit<CommissionPool, "createdAt" | keyof typeof DEFAULT_POOL> & Partial<Pick<CommissionPool, keyof typeof DEFAULT_POOL>>): CommissionPool {
     const pool: CommissionPool = { ...DEFAULT_POOL, ...p, createdAt: this.nowIso() } as CommissionPool;
+    if (pool.pricing === "stake") pool.stake = { ...DEFAULT_STAKE, ...pool.stake };
     const e = validatePool(pool);
     for (const id of [pool.operatorPayeeId, ...pool.miners.map((m) => m.payeeId)]) if (!this.s.payees[id]) e.push(`unknown payee ${id}`);
     if (pool.clusterId && !this.s.charters[pool.clusterId]) e.push(`unknown cluster ${pool.clusterId}`);
@@ -563,7 +564,7 @@ export class CreatorPayments {
     if (used && this.s.commissionPools[pool.id]) {
       // Miners can join or change caps later; the price basis can't change under existing commissions.
       const was = this.s.commissionPools[pool.id];
-      for (const k of ["factoryId", "operation", "operatorPayeeId", "baseline", "priorLearningRate", "minFitPoints"] as const) if (JSON.stringify(was[k]) !== JSON.stringify(pool[k])) e.push(`${k} can't change once the pool has commissions`);
+      for (const k of ["factoryId", "operation", "operatorPayeeId", "baseline", "priorLearningRate", "minFitPoints", "pricing", "stake"] as const) if (JSON.stringify(was[k]) !== JSON.stringify(pool[k])) e.push(`${k} can't change once the pool has commissions`);
       pool.createdAt = was.createdAt;
     }
     if (e.length) throw new Error(`invalid commission pool ${p.id}: ${e.join("; ")}`);
@@ -589,8 +590,12 @@ export class CreatorPayments {
     return this.store.mutate((s) => (s.commissions[id] = { id, poolId: pool.id, factoryId: pool.factoryId, minerPayeeId: p.minerPayeeId, brief: { title: p.title, songRef: p.songRef, requestedSeconds: p.requestedSeconds, notes: p.notes }, status: "quoted", ...priced }));
   }
 
-  /** The miner's Qi transfer to the factory. Recorded from the tx hash; checking it on-chain is the caller's job for now. */
-  confirmCommissionPayment(id: string, p: { txHash: string; qiBase: number }): Commission {
+  /**
+   * The miner's Qi transfer to the factory: the price (fixed_quote) or a stake of at least projected cost + margin.
+   * A staker also says whether unused stake comes back or is burned. Recorded from the tx hash; checking it on-chain
+   * is the caller's job for now.
+   */
+  confirmCommissionPayment(id: string, p: { txHash: string; qiBase: number; remainder?: Remainder }): Commission {
     this.expireCommissionQuotes();
     const c = this.mustCommission(id);
     if (c.status === "paid" && c.payment?.txHash === p.txHash) return c;
@@ -598,9 +603,10 @@ export class CreatorPayments {
     if (!p.txHash?.trim()) throw new Error("txHash is required");
     if (!Number.isInteger(p.qiBase) || p.qiBase < c.quote.qiBase) throw new Error(`payment of ${formatQi(p.qiBase)} is below the quote of ${formatQi(c.quote.qiBase)}`);
     if (Object.values(this.s.commissions).some((x) => x.payment?.txHash === p.txHash)) throw new Error(`tx ${p.txHash} already paid another commission`);
+    if (p.remainder !== undefined && (c.pricing !== "stake" || !["return", "burn"].includes(p.remainder))) throw new Error("remainder is return or burn, and only for staked commissions");
     return this.store.mutate((s) => {
       const x = s.commissions[id];
-      x.status = "paid"; x.payment = { txHash: p.txHash, qiBase: p.qiBase, at: this.nowIso() };
+      x.status = "paid"; x.payment = { txHash: p.txHash, qiBase: p.qiBase, at: this.nowIso(), ...(x.pricing === "stake" ? { remainder: p.remainder ?? this.mustPool(x.poolId).stake!.defaultRemainder } : {}) };
       this.store.post(s, { id: `commission-paid:${id}`, at: x.payment.at, kind: "commission_paid", refs: { commission: id, tx: p.txHash, miner: x.minerPayeeId }, postings: [{ account: `qi:wallet:${x.factoryId}`, currency: "qi_base", amount: p.qiBase }, { account: `commission:${id}`, currency: "qi_base", amount: -p.qiBase }] });
       return x;
     });
@@ -634,25 +640,43 @@ export class CreatorPayments {
     const at = this.nowIso();
     this.recordDelivery({ id: `delivery:${id}`, factoryId: c.factoryId, operatorPayeeId: pool.operatorPayeeId, operation: pool.operation, submittedAt: c.payment!.at, deliveredAt: c.delivery!.at, accepted: p.accepted, quality: p.accepted ? p.quality! : (p.quality ?? 0), qualitySource: "customer", clusterId: pool.clusterId, inputHash: stableHash(c.brief), rejectionReason: p.accepted ? undefined : p.reason });
     const paid = c.payment!.qiBase;
-    const refund = p.accepted ? 0 : Math.floor((paid * pool.rejectionRefundBps) / 10_000);
+    const settlement = c.pricing === "stake" ? settleStake(pool, c, p.accepted) : undefined;
+    // What goes back to the miner and what is burned. Under a fixed quote only a rejection refunds.
+    const refund = settlement ? (settlement.remainder === "return" ? settlement.remainderQiBase : 0) : p.accepted ? 0 : Math.floor((paid * pool.rejectionRefundBps) / 10_000);
+    const burn = settlement?.remainder === "burn" ? settlement.remainderQiBase : 0;
+    const earned = paid - refund - burn;
     return this.store.mutate((s) => {
       const x = s.commissions[id];
       x.status = p.accepted ? "accepted" : "rejected";
-      x.decision = { at, accepted: p.accepted, quality: p.quality, reason: p.reason, refundQiBase: refund };
-      this.store.post(s, { id: `commission-decided:${id}`, at, kind: p.accepted ? "commission_accepted" : "commission_rejected", refs: { commission: id }, postings: [{ account: `commission:${id}`, currency: "qi_base", amount: paid }, ...(paid - refund ? [{ account: `earned_qi:${x.factoryId}`, currency: "qi_base" as const, amount: -(paid - refund) }] : []), ...(refund ? [{ account: `payable_qi:${x.minerPayeeId}`, currency: "qi_base" as const, amount: -refund }] : [])] });
+      x.decision = { at, accepted: p.accepted, quality: p.quality, reason: p.reason, refundQiBase: refund, ...(burn ? { burnQiBase: burn } : {}), ...(settlement ? { settlement } : {}) };
+      this.store.post(s, { id: `commission-decided:${id}`, at, kind: p.accepted ? "commission_accepted" : "commission_rejected", refs: { commission: id }, postings: [{ account: `commission:${id}`, currency: "qi_base", amount: paid }, ...(earned ? [{ account: `earned_qi:${x.factoryId}`, currency: "qi_base" as const, amount: -earned }] : []), ...(refund ? [{ account: `payable_qi:${x.minerPayeeId}`, currency: "qi_base" as const, amount: -refund }] : []), ...(burn ? [{ account: `burn_qi:${x.factoryId}`, currency: "qi_base" as const, amount: -burn }] : [])] });
       return (s.commissions[id] = sealCommission(x));
     });
   }
 
   confirmCommissionRefund(id: string, txHash: string): Commission {
     const c = this.mustCommission(id);
-    if (c.status !== "rejected" || !c.decision?.refundQiBase) throw new Error(`commission ${id} has no refund owed`);
+    if (!c.decision?.refundQiBase) throw new Error(`commission ${id} has no refund owed`);
     if (c.decision.refundTxHash) { if (c.decision.refundTxHash === txHash) return c; throw new Error(`refund for ${id} already confirmed with ${c.decision.refundTxHash}`); }
     if (!txHash?.trim()) throw new Error("txHash is required");
     return this.store.mutate((s) => {
       const x = s.commissions[id];
       x.decision!.refundTxHash = txHash;
       this.store.post(s, { id: `commission-refund:${id}`, at: this.nowIso(), kind: "commission_refund", refs: { commission: id, tx: txHash }, postings: [{ account: `payable_qi:${x.minerPayeeId}`, currency: "qi_base", amount: x.decision!.refundQiBase }, { account: `qi:wallet:${x.factoryId}`, currency: "qi_base", amount: -x.decision!.refundQiBase }] });
+      return (s.commissions[id] = sealCommission(x));
+    });
+  }
+
+  /** Unused stake the miner chose to burn. The tx is the burn itself (Qi converted and burned, or sent to the burn address). */
+  confirmCommissionBurn(id: string, txHash: string): Commission {
+    const c = this.mustCommission(id);
+    if (!c.decision?.burnQiBase) throw new Error(`commission ${id} has nothing to burn`);
+    if (c.decision.burnTxHash) { if (c.decision.burnTxHash === txHash) return c; throw new Error(`burn for ${id} already confirmed with ${c.decision.burnTxHash}`); }
+    if (!txHash?.trim()) throw new Error("txHash is required");
+    return this.store.mutate((s) => {
+      const x = s.commissions[id];
+      x.decision!.burnTxHash = txHash;
+      this.store.post(s, { id: `commission-burn:${id}`, at: this.nowIso(), kind: "commission_burn", refs: { commission: id, tx: txHash }, postings: [{ account: `burn_qi:${x.factoryId}`, currency: "qi_base", amount: x.decision!.burnQiBase! }, { account: `qi:wallet:${x.factoryId}`, currency: "qi_base", amount: -x.decision!.burnQiBase! }] });
       return (s.commissions[id] = sealCommission(x));
     });
   }

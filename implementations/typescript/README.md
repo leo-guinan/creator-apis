@@ -8,7 +8,7 @@ Three packages, one workspace:
 
 ```bash
 pnpm install
-pnpm validate            # typecheck + 54 tests, no network
+pnpm validate            # typecheck + 56 tests, no network
 pnpm export:press        # regenerate creators/leo/press agent cards from cast.json
 pnpm bootstrap:stripe    # test-mode catalog: $20/month price, compute meter, metered price
 pnpm server              # local HTTP API on :8790
