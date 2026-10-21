@@ -17,9 +17,11 @@ export interface WaterfallInput {
   quote?: EnergyQuote;
   /** Energy evidence that earns Qi. Unknown energy never does. */
   acceptEnergy: Exclude<EnergySource, "unknown">[];
+  /** false when operators are paid Qi from the period pool instead of from each sale (the default). */
+  deductEnergy?: boolean;
 }
 
-export type LineKind = "stripe_fee" | "platform_fee" | "tool_royalty" | "provider_passthrough" | "energy" | "margin";
+export type LineKind = "stripe_fee" | "platform_fee" | "tool_royalty" | "provider_passthrough" | "energy" | "margin" | "time_reward";
 export interface SettlementLine { kind: LineKind; payeeId?: string; rail: "none" | "platform" | "stripe" | "qi"; usdCents: number; qiBase?: number; energyWh?: number; note: string; }
 export interface Waterfall {
   status: "ok" | "needs_quote";
@@ -73,7 +75,7 @@ export function computeWaterfall(input: WaterfallInput): Waterfall {
     }
     if (r.hosting === "operator" && input.acceptEnergy.includes("estimated")) for (const m of r.energy.methods) if (!energy.methods.includes(m)) energy.methods.push(m);
   }
-  if (energy.acceptedWh > 0) {
+  if (energy.acceptedWh > 0 && input.deductEnergy !== false) {
     if (!input.quote) return { status: "needs_quote", lines, shortfalls, energy, checks: { linesSumToGross: false } };
     const priced = priceEnergy(energy.acceptedWh, input.quote);
     const paid = Math.min(priced.usdCents, left);

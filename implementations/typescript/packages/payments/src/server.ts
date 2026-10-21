@@ -53,6 +53,10 @@ export function createPaymentsServer(payments: CreatorPayments, opts: ServerOpti
       if (route === "POST /v1/payouts/qi/export") return send(res, 200, payments.exportQiBatch());
       if ((m = route.match(/^POST \/v1\/payouts\/([^/]+)\/confirm$/))) return send(res, 200, payments.confirmQiPayout(m[1], json().txHash));
       if ((m = route.match(/^GET \/v1\/operators\/([^/]+)\/statement$/))) return send(res, 200, payments.operatorStatement(decodeURIComponent(m[1]), { from: url.searchParams.get("from") ?? "0000", to: url.searchParams.get("to") ?? "9999" }));
+      if (route === "POST /v1/deliveries") return send(res, 201, payments.recordDelivery(json()));
+      if (route === "GET /v1/rewards/standards") return send(res, 200, payments.currentStandards());
+      if (route === "POST /v1/rewards/periods/close") return send(res, 200, payments.closeRewardPeriod(json()));
+      if ((m = route.match(/^GET \/v1\/rewards\/periods\/([^/]+)$/))) { const period = payments.store.state.rewardPeriods.find((x) => x.id === decodeURIComponent(m![1])); return period ? send(res, 200, period) : send(res, 404, { error: "no such period" }); }
       if (route === "GET /v1/ledger/balances") return send(res, 200, payments.store.balances(url.searchParams.get("prefix") ?? ""));
       return send(res, 404, { error: "not found" });
     } catch (error) {

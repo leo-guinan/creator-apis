@@ -3,6 +3,7 @@ import { validateReceipt, type EnergySource, type OperationReceipt } from "../..
 import type { PaymentsGateway, WebhookEvent } from "./gateway.js";
 import { formatQi, isQiAddress, validateQuote, type EnergyQuote } from "./qi.js";
 import { computeWaterfall, type MarginShare, type ToolRoyalty } from "./settlement.js";
+import { closeRewardPeriod, computeStandards, defaultRewardConfig, validateRewardConfig, type Delivery, type RewardConfig, type RewardPeriod } from "./rewards.js";
 import type { Creator, MeterStatus, Offer, Order, Payee, PayoutInstruction, Settlement, State, Store, SubscriptionStatus } from "./store.js";
 
 export interface PaymentsConfig {
@@ -14,6 +15,9 @@ export interface PaymentsConfig {
   defaultComputeBudgetCents?: number;
   quoteMaxAgeHours?: number;
   acceptEnergy?: Exclude<EnergySource, "unknown">[];
+  /** "pool": operators earn Qi from the period reward pool (default). "sale": operator energy is deducted from each sale and paid in Qi. */
+  qiFrom?: "pool" | "sale";
+  rewards?: RewardConfig;
   now?: () => Date;
 }
 
@@ -25,7 +29,7 @@ const str = (v: unknown) => (typeof v === "string" ? v : typeof v === "object" &
 export class CreatorPayments {
   readonly cfg: Required<Omit<PaymentsConfig, "now">> & { now: () => Date };
   constructor(readonly gateway: PaymentsGateway, readonly store: Store, config: PaymentsConfig) {
-    this.cfg = { subscriptionCents: 2000, meterEventName: "factory_compute_cents", meteredUnitAmountDecimal: "1", defaultComputeBudgetCents: 2000, quoteMaxAgeHours: 24, acceptEnergy: ["measured", "provider_reported", "estimated"], now: () => new Date(), ...config } as CreatorPayments["cfg"];
+    this.cfg = { subscriptionCents: 2000, meterEventName: "factory_compute_cents", meteredUnitAmountDecimal: "1", defaultComputeBudgetCents: 2000, quoteMaxAgeHours: 24, acceptEnergy: ["measured", "provider_reported", "estimated"], qiFrom: "pool", rewards: defaultRewardConfig(), now: () => new Date(), ...config } as CreatorPayments["cfg"];
   }
   private get s(): State { return this.store.state; }
   private nowIso() { return this.cfg.now().toISOString(); }
@@ -64,7 +68,7 @@ export class CreatorPayments {
   // ------------------------------------------------------------ payees (Connect recipients) + Qi addresses
 
   async registerPayee(p: { id: string; kind: Payee["kind"]; displayName: string; email: string; country?: string; qiAddress?: string }): Promise<{ payee: Payee; onboardingUrl: string }> {
-    if (!/^(creator|operator|tool):[a-z0-9][a-z0-9-]{1,63}$/.test(p.id) || !p.id.startsWith(`${p.kind}:`)) throw new Error("payee id must look like <kind>:<slug>");
+    if (!/^(creator|operator|tool):[a-z0-9][a-z0-9-]{0,63}$/.test(p.id) || !p.id.startsWith(`${p.kind}:`)) throw new Error("payee id must look like <kind>:<slug>");
     if (p.qiAddress && !isQiAddress(p.qiAddress)) throw new Error(`${p.qiAddress} is not a Qi-ledger address`);
     let payee = this.s.payees[p.id];
     if (!payee) {
@@ -242,7 +246,7 @@ export class CreatorPayments {
     const receipts = Object.values(this.s.receipts).map((r) => r.receipt).filter((r) => r.orderRef === orderId);
     const quote = this.latestQuote();
     const quoteErrors = validateQuote(quote, this.cfg.now(), this.cfg.quoteMaxAgeHours);
-    const waterfall = computeWaterfall({ grossCents: order.amountCents, stripeFeeCents: order.stripeFeeCents, quantity: order.quantity, platformFeeBps: offer.platformFeeBps, tools: offer.tools, operatorPayeeId: offer.operatorPayeeId, marginShares: offer.marginShares, receipts, quote: quoteErrors.length ? undefined : quote, acceptEnergy: this.cfg.acceptEnergy });
+    const waterfall = computeWaterfall({ grossCents: order.amountCents, stripeFeeCents: order.stripeFeeCents, quantity: order.quantity, platformFeeBps: offer.platformFeeBps, tools: offer.tools, operatorPayeeId: offer.operatorPayeeId, marginShares: offer.marginShares, receipts, quote: quoteErrors.length ? undefined : quote, acceptEnergy: this.cfg.acceptEnergy, deductEnergy: this.cfg.qiFrom === "sale" });
     if (waterfall.status === "needs_quote") return { status: "needs_quote", reasons: [`${waterfall.energy.acceptedWh.toFixed(3)} Wh of operator energy needs pricing`, ...quoteErrors] };
     if (!waterfall.checks.linesSumToGross) throw new Error(`settlement for ${orderId} does not reconcile to gross`);
     const id = `stl_${orderId.slice(4)}`;
@@ -299,6 +303,51 @@ export class CreatorPayments {
     });
   }
 
+  // ------------------------------------------------------------ time-based Qi rewards from the period pool
+
+  /** Records a delivery as the platform observed it. Times come from the platform's boundary, not the operator's receipt. */
+  recordDelivery(d: Delivery): Delivery {
+    const e: string[] = [];
+    if (!/^[A-Za-z0-9_.:-]{3,80}$/.test(d.id ?? "")) e.push("id is required");
+    if (!this.s.payees[d.operatorPayeeId]) e.push(`unknown payee ${d.operatorPayeeId}`);
+    if (!d.operation || !d.factoryId) e.push("operation and factoryId are required");
+    if (Number.isNaN(Date.parse(d.submittedAt)) || Number.isNaN(Date.parse(d.deliveredAt)) || d.deliveredAt < d.submittedAt) e.push("submittedAt and deliveredAt must be dates in order");
+    if (!(d.quality >= 0 && d.quality <= 1)) e.push("quality must be 0..1");
+    if (d.receiptId && !this.s.receipts[d.receiptId]) e.push(`unknown receipt ${d.receiptId}`);
+    if (d.reuseOf && !this.s.deliveries[d.reuseOf]) e.push(`unknown original delivery ${d.reuseOf}`);
+    if (this.s.rewardPeriods.some((p) => d.deliveredAt <= p.end)) e.push("delivery falls in a period that is already closed");
+    if (e.length) throw new Error(`invalid delivery: ${e.join("; ")}`);
+    const prior = this.s.deliveries[d.id];
+    if (prior) { if (JSON.stringify(prior) !== JSON.stringify(d)) throw new Error(`delivery ${d.id} already recorded differently`); return prior; }
+    return this.store.mutate((s) => (s.deliveries[d.id] = { ...d }));
+  }
+
+  /** The standards in force for the next period to close: the last period's computed standards, or declared ones at the start. */
+  currentStandards() { const last = this.s.rewardPeriods.at(-1); return last?.nextStandards ?? computeStandards([], {}, this.cfg.rewards); }
+
+  /** Closes a reward period: scores deliveries against the standards, sizes and splits the pool, and queues Qi payouts. */
+  closeRewardPeriod(p: { id: string; start: string; end: string }): RewardPeriod {
+    const existing = this.s.rewardPeriods.find((x) => x.id === p.id);
+    if (existing) return existing;
+    const errors = validateRewardConfig(this.cfg.rewards);
+    if (errors.length) throw new Error(`invalid reward config: ${errors.join("; ")}`);
+    const last = this.s.rewardPeriods.at(-1);
+    if (p.end > this.nowIso()) throw new Error("a period can't close before it ends");
+    if (p.start > p.end) throw new Error("period start must be before its end");
+    if (last && p.start <= last.end) throw new Error(`period ${p.id} overlaps ${last.id}`);
+    const rollover = Object.fromEntries((last?.pool.sections ?? []).map((sec) => [sec.id, sec.rolloverOutQiBase]));
+    const period = closeRewardPeriod({ ...p, deliveries: Object.values(this.s.deliveries), standards: this.currentStandards(), rollover, config: this.cfg.rewards, previous: last ? { id: last.id, hash: last.hash } : undefined });
+    this.store.mutate((s) => {
+      s.rewardPeriods.push(period);
+      for (const [i, payout] of period.payouts.entries()) {
+        this.store.post(s, { id: `qi-reward:${period.id}:${payout.payeeId}`, at: this.nowIso(), kind: "qi_time_reward", refs: { period: period.id }, postings: [{ account: "qi:obligations", currency: "qi_base", amount: payout.qiBase }, { account: `payable_qi:${payout.payeeId}`, currency: "qi_base", amount: -payout.qiBase }] });
+        const pid = `rwd_${period.id.replace(/[^A-Za-z0-9]/g, "")}_${i}`;
+        s.payouts[pid] = { id: pid, settlementId: period.id, orderId: period.id, payeeId: payout.payeeId, rail: "qi", amount: payout.qiBase, currency: "qi_base", status: "pending", transferGroup: period.id, updatedAt: this.nowIso(), line: { kind: "time_reward", payeeId: payout.payeeId, rail: "qi", usdCents: 0, qiBase: payout.qiBase, note: `${payout.score.toFixed(1)} standard seconds in period ${period.id}` } };
+      }
+    });
+    return period;
+  }
+
   // ------------------------------------------------------------ how much energy operators keep operating with
 
   operatorStatement(payeeId: string, period: { from: string; to: string }) {
@@ -317,6 +366,18 @@ export class CreatorPayments {
       energy: { ...energyByClass, reimbursedWh: sum(energyLines.map((l) => l.energyWh ?? 0)), unfundedWh: sum(shortfalls.filter((f) => f.kind === "energy").map((f) => f.energyWh ?? 0)) },
       qi: { earnedBase: sum(energyLines.map((l) => l.qiBase ?? 0)), earned: formatQi(sum(energyLines.map((l) => l.qiBase ?? 0))), owedBase: -this.store.balance(`payable_qi:${payeeId}`, "qi_base") || 0 },
       fiat: { marginCents: sum(lines.filter((l) => l.kind === "margin").map((l) => l.usdCents)), providerReimbursedCents: sum(lines.filter((l) => l.kind === "provider_passthrough").map((l) => l.usdCents)), owedCents: -this.store.balance(`payable:${payeeId}`, "usd_cents") || 0 },
+      rewards: (() => {
+        const periods = this.s.rewardPeriods.filter((x) => x.end >= period.from && x.start <= period.to);
+        const mine = periods.flatMap((x) => x.deliveries.filter((d) => d.operatorPayeeId === payeeId));
+        const scored = mine.filter((d) => d.speedup !== undefined);
+        return {
+          qiBase: sum(periods.flatMap((x) => x.payouts.filter((p) => p.payeeId === payeeId).map((p) => p.qiBase))),
+          deliveries: mine.length, scored: scored.length,
+          medianSpeedup: scored.length ? [...scored.map((d) => d.speedup!)].sort((a, b) => a - b)[Math.floor(scored.length / 2)] : null,
+          standardSecondsEarned: sum(periods.flatMap((x) => x.deliveries.filter((d) => d.creditedTo === payeeId).map((d) => d.score))),
+          unscoredReasons: Object.fromEntries([...new Set(mine.filter((d) => d.score === 0).map((d) => d.reason))].map((r) => [r, mine.filter((d) => d.reason === r).length]))
+        };
+      })(),
       /** Share of the revenue on this operator's orders that went to operating energy. Lower is more efficient. */
       energyCostShareOfRevenue: grossOfOrders ? energyCents / grossOfOrders : null,
       completedOperationsPerKwh: energyByClass.measuredWh + energyByClass.providerReportedWh + energyByClass.estimatedWh > 0 ? receipts.filter((r) => r.status === "completed").length / ((energyByClass.measuredWh + energyByClass.providerReportedWh + energyByClass.estimatedWh) / 1000) : null

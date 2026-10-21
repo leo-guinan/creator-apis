@@ -11,7 +11,7 @@ Creator APIs sells the ability to produce, not a tax on relationships. Money mov
 | Customer checkout | Checkout in `payment` mode at the creator's price, `transfer_group` = order id | Customer → platform balance |
 | Payouts | Connect transfers to recipient accounts, `source_transaction` = the charge | Platform balance → creator, operator, tool authors |
 
-Plus one rail outside Stripe: **operating energy reimbursed in Qi** to independent factory operators. See [`operator-rewards.md`](operator-rewards.md).
+Plus one rail outside Stripe: **Qi rewards for factory operators**, paid from a pool each period for the time it takes to create, normalized against a standard artifact. See [`operator-rewards.md`](operator-rewards.md).
 
 ## Settlement waterfall (per paid order)
 
@@ -21,14 +21,15 @@ gross (what the customer paid)
   − platform fee                        bps of gross; default 0
   − tool royalties                      per sale and/or bps of gross, per tool author
   − provider pass-through               third-party API costs the operator paid (receipts with hosting=provider), fiat
-  − operating energy                    operator-hosted, accepted evidence only, paid in Qi, deducted at the quote's USD value
   = margin                              fiat, split by the offer's shares (default 100% to the creator)
 ```
+
+Operators earn Qi from the period pool, not from each sale. With `qiFrom: "sale"`, operator energy is instead deducted before margin at an energy quote and paid in Qi.
 
 - Each step takes what's left. What a step can't cover is recorded as a **shortfall**, never a negative payout and never paid from elsewhere.
 - Lines always reconcile to gross; settlement throws if they don't.
 - Platform-hosted work isn't deducted here: it's already billed to the creator as metered compute.
-- Settlement waits (`needs_quote`) if operator energy needs pricing and there's no fresh quote.
+- In `qiFrom: "sale"` mode, settlement waits (`needs_quote`) if operator energy needs pricing and there's no fresh quote.
 
 ## Ledger
 

@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { OperationReceipt } from "../../contracts/src/index.js";
 import type { EnergyQuote } from "./qi.js";
+import type { Delivery, RewardPeriod } from "./rewards.js";
 import type { MarginShare, SettlementLine, ToolRoyalty, Waterfall } from "./settlement.js";
 
 export type Currency = "usd_cents" | "qi_base";
@@ -33,10 +34,12 @@ export interface State {
   payouts: Record<string, PayoutInstruction>;
   quotes: EnergyQuote[];
   processedEvents: Record<string, string>;
+  deliveries: Record<string, Delivery>;
+  rewardPeriods: RewardPeriod[];
   journal: JournalEntry[];
 }
 
-const empty = (): State => ({ version: 1, creators: {}, payees: {}, offers: {}, orders: {}, receipts: {}, settlements: {}, payouts: {}, quotes: [], processedEvents: {}, journal: [] });
+const empty = (): State => ({ version: 1, creators: {}, payees: {}, offers: {}, orders: {}, receipts: {}, settlements: {}, payouts: {}, quotes: [], processedEvents: {}, deliveries: {}, rewardPeriods: [], journal: [] });
 
 /** One JSON file, written atomically after every mutation, so entities and the journal never disagree. A reference store, not a production database. */
 export class Store {

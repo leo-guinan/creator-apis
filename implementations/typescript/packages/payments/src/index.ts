@@ -4,3 +4,4 @@ export { Store, type State, type Creator, type Payee, type Offer, type Order, ty
 export { computeWaterfall, type Waterfall, type WaterfallInput, type SettlementLine, type ToolRoyalty, type MarginShare } from "./settlement.js";
 export { QI_DECIMALS, QI_BASE_PER_QI, isQiAddress, formatQi, priceEnergy, validateQuote, type EnergyQuote } from "./qi.js";
 export { createPaymentsServer, signReceipt, type ServerOptions } from "./server.js";
+export { closeRewardPeriod, computeStandards, defaultRewardConfig, multiplier, durationSeconds, standardKey, rewardPeriodHashValid, validateRewardConfig, type Delivery, type QualitySource, type RewardConfig, type RewardPeriod, type PoolSection, type PoolSchedule, type Standard, type ScoredDelivery } from "./rewards.js";

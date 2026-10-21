@@ -17,7 +17,7 @@ function receipt(over: Partial<OperationReceipt> & { wh?: number } = {}): Operat
 async function setup() {
   const gateway = new FakeGateway();
   const store = new Store(join(await mkdtemp(join(process.cwd(), ".tmp-pay-")), "state.json"));
-  const payments = new CreatorPayments(gateway, store, { publicUrl: "https://creatorapis.test", now: () => NOW });
+  const payments = new CreatorPayments(gateway, store, { publicUrl: "https://creatorapis.test", qiFrom: "sale", now: () => NOW });
   let evt = 0;
   const webhook = async (type: string, object: Record<string, unknown>, livemode = false) => { const payload = JSON.stringify({ id: `evt_${++evt}`, object: "event", type, livemode, data: { object } }); return payments.handleWebhook(payload, gateway.sign(payload)); };
   return { gateway, store, payments, webhook };

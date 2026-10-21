@@ -1,51 +1,94 @@
-# Operator rewards: energy in Qi, margin in fiat
+# Operator rewards: Qi for time, from a pool
 
-**Status:** settlement math, Qi pricing, payout export and confirmation are implemented and tested. Qi is never sent by this service; payouts are exported for signing elsewhere. The energy-to-Qi rate is an open governance question (below).
+**Status:** implemented and tested in `implementations/typescript/packages/payments/src/rewards.ts`. Qi is never sent by this service. Payouts are exported for signing elsewhere and confirmed by transaction hash. The pool's size, sections and the curve's constants are configuration, set by whoever runs the network.
 
-A factory operator runs a creator's factory on their own hardware. The question this answers: *how much energy does it take to keep operating, and who pays for it?*
+At the human level, time and energy can be equated. So factory operators are rewarded in Qi, Quai's energy-denominated token, for the **time it takes to create**, normalized against a standard and paid from a **pool** each period. Fiat stays the currency of sales: customers pay creators, and the margin goes out through Stripe.
 
-1. **Every operation reports its energy.** Factories emit `operation-receipt@1` with energy totalled by evidence class: `measured`, `provider_reported`, `estimated` (only with a declared method), and a count of steps with no reading. Nothing is converted silently; unknown energy earns nothing.
-2. **Energy is paid in Qi.** Qi is Quai Network's energy-denominated token, so the cost of operating is settled in a unit that tracks energy rather than dollars.
-3. **What's left is paid in fiat.** After fees, royalties and energy, the margin goes out through Stripe by the offer's shares. The operator can hold a share of margin as well as being reimbursed for energy.
+## The standard
+
+Every kind of artifact (operation × size band) has a standard: quality **q₀** and time **t₀**.
+
+- **t₀** is the median time of last period's deliveries that were accepted, met q₀, and were judged by a source the operator doesn't control. With too few samples, the previous standard carries forward. A brand-new operation starts from a declared standard.
+- The standard is recomputed every period, like mining difficulty. When the network gets faster, last period's speed becomes this period's baseline.
+- Standards for the next period are published when a period closes, so operators know the curve before they do the work.
+
+## The curve
+
+A delivery that meets q₀ scores **t₀ × m(s)** standard seconds, where **s = t₀ / t** is its speedup:
 
 ```
-operator energy (Wh, accepted evidence)  ×  quote.qiPerKwh / 1000   →  Qi owed (rounded down to 0.001 Qi)
-Qi owed  ×  quote.usdPerQi                                          →  USD deducted from the sale before margin
+m(s) = 1 + β · log₂(s), clamped to [floor, cap]        defaults: β = 0.25, floor 0.5, cap 1.75
 ```
 
-If the sale can't cover the energy, the operator is paid what it can cover, and the rest is recorded as unfunded energy. That's the signal that this offer is priced below its operating cost.
+| Time vs standard | Multiplier |
+|---|---|
+| 2× slower | 0.75 |
+| at standard | 1.00 |
+| 2× faster | 1.25 |
+| 4× faster | 1.50 |
+| 8×+ faster | 1.75 (cap) |
 
-## What we know about Qi, and what we don't
+Same quality in less time earns more per artifact. And because a faster operator also completes more artifacts per period, the reward per hour of work rises faster than the multiplier alone.
+
+Scores are zero when:
+- the delivery wasn't accepted;
+- quality came from the operator's own evaluator (`self`);
+- quality was below q₀;
+- or there's no standard yet for that kind of work.
+
+A delivery served from earlier work (`reuseOf`) gets no speed bonus. Instead it credits a **reuse royalty** (25% of t₀ by default) to whoever made the original.
+
+## Time is measured by the platform
+
+A speed bonus makes under-reporting time profitable, so time comes from the platform's own boundary: when the job came in and when the accepted artifact came back. A delivery is recorded with `POST /v1/deliveries`, an admin route for the platform's own observations. The factory's receipt is linked as evidence but never sets the time.
+
+## The pool
+
+Each period has a Qi budget:
+
+```
+pool = min(max, base + perActiveFactory × active factories)
+```
+
+A factory counts as active only if it earned at least a minimum score in the period. So the pool grows with the network of factories that are actually delivering, up to a cap you raise as the network proves itself.
+
+**Sections** split the pool by need, each with a share in basis points. For example:
+
+| Section | Share | Matches |
+|---|---|---|
+| Voices | 30% | `create-voice` |
+| Stories | 50% | `create-story` |
+| Everything else | 20% | (catch-all) |
+
+A delivery belongs to the first section that matches its operation. Within a section, Qi is paid in proportion to score. An optional per-operator cap stops one operator from taking a whole section. Whatever a section doesn't pay out, including rounding remainders, budget an empty section never used, and amounts over the cap, rolls into the same section next period. Nothing is created or lost.
+
+## Held to account
+
+A closed period is a sealed `reward-period@1` record. It contains:
+- the config;
+- the standards used and the next standards;
+- the pool and each section's budget, rollover and payout;
+- every delivery's time, standard, speedup, multiplier, score and the reason for any zero;
+- the payouts.
+
+It's hashed and chained to the previous period. Closing is deterministic, so any operator can recompute their pay from the same inputs, and a delivery can't be added to a period after it closes.
+
+## Per-sale energy, still available
+
+`qiFrom: "sale"` restores the earlier model, where measured operating energy is deducted from each sale at an energy quote and paid in Qi. The default is `"pool"`: sales don't deduct energy, and energy readings stay in the operator statement as evidence of efficiency.
+
+## What we know about Qi
 
 | Fact | Source |
 |---|---|
-| Qi has 3 decimal places | quais.js `formatQi`/`parseQi` (3 decimals) |
+| Qi has 3 decimal places (amounts here are integers of 0.001 Qi) | quais.js `formatQi`/`parseQi` |
 | Qi uses a UTXO ledger; Qi-ledger addresses have the high bit of the second byte set | qu.ai "What is QI"; quais.js `isQiAddress` |
 | Qi issuance is linear in difficulty, so each Qi represents roughly constant energy | docs.qu.ai Qi emissions |
-| QUAI↔Qi convert at market rate through a miner-disciplined controller | qu.ai "What is QI" |
-| **There is no published fixed kWh-per-Qi peg** | none of the above names one |
-
-So the rate is an explicit **energy quote**: `{ qiPerKwh, usdPerQi, source, observedAt }`. A quote must name its source and be under 24 hours old (configurable) to be used. Settlement refuses to guess.
 
 ## Open questions
 
-1. **Who sets `qiPerKwh`?** Options: derive it from network difficulty and a reference hash rate per joule; take the market QUAI/Qi rate times a declared regional energy price; or make it a published governance parameter that changes on a schedule. Each one makes a different claim about what "energy" means. Until one is chosen, quotes are recorded manually with their source.
-2. **Where does the Qi come from?** Settlement reserves the USD value (`qi:reserve`) and records the Qi owed (`qi:obligations`). Buying or mining that Qi and holding it is a treasury decision outside this service.
-3. **How much should estimated energy count?** Today estimates with a declared method count fully. A stricter policy accepts only measured and provider-reported energy (`acceptEnergy` setting), which pays nothing until operators meter their hardware.
-4. **Tax and regulatory treatment** of Qi payouts isn't addressed here. Get advice before paying anyone in Qi.
-
-## Operator statement
-
-`GET /v1/operators/operator:<id>/statement?from=…&to=…` reports, for the period:
-- operations run, by hosting
-- energy by evidence class, energy reimbursed, energy left unfunded
-- Qi earned and still owed; fiat margin, provider reimbursements and fiat still owed
-- energy cost as a share of revenue on the operator's orders, and completed operations per kWh
-
-Those last two answer "how much energy do they keep operating with": lower energy share and more operations per kWh mean a more efficient factory.
-
-## Paying out
-
-1. `POST /v1/payouts/qi/export` returns a batch of `{to, amount, energyWh}` for every Qi payout with a Qi-ledger address on file. Others wait for an address.
-2. Sign and send with your Quai wallet (the service holds no keys).
-3. `POST /v1/payouts/<id>/confirm` with the transaction hash closes the obligation in the ledger.
+1. **Pool funding.** The pool is an obligation recorded in the ledger (`qi:obligations`). Acquiring or mining the Qi, and holding it, is a treasury decision outside this service.
+2. **Starting numbers.** The base, per-factory growth, cap, section shares and β are placeholders. A conservative start: a small base, sections only for the operations that exist, β = 0.25.
+3. **Independent quality.** The q₀ gate is only as good as its quality sources. Today those are customer acceptance, a network evaluator, or documented answers at a press conference. How each is attested still needs defining.
+4. **Sybil factories.** Pool growth per active factory invites fake factories. The minimum active score and independent quality checks are the current defence. A stake or identity requirement may be needed.
+5. **Tax and regulatory treatment** of Qi payouts isn't addressed here.
