@@ -57,6 +57,10 @@ export function createPaymentsServer(payments: CreatorPayments, opts: ServerOpti
       if (route === "GET /v1/rewards/standards") return send(res, 200, payments.currentStandards());
       if (route === "POST /v1/rewards/periods/close") return send(res, 200, payments.closeRewardPeriod(json()));
       if ((m = route.match(/^GET \/v1\/rewards\/periods\/([^/]+)$/))) { const period = payments.store.state.rewardPeriods.find((x) => x.id === decodeURIComponent(m![1])); return period ? send(res, 200, period) : send(res, 404, { error: "no such period" }); }
+      if (route === "POST /v1/clusters") return send(res, 201, payments.registerCharter(json()));
+      if ((m = route.match(/^POST \/v1\/clusters\/([^/]+)\/epochs\/close$/))) { const b = json(); return send(res, 200, payments.closeClusterEpoch(m[1], b.epoch, { phases: b.phases, costCents: b.costCents })); }
+      if ((m = route.match(/^GET \/v1\/clusters\/([^/]+)\/epochs$/))) return send(res, 200, payments.store.state.clusterEpochs[m[1]] ?? []);
+      if ((m = route.match(/^POST \/v1\/clusters\/([^/]+)\/epochs\/([^/]+)\/burn$/))) return send(res, 200, payments.confirmClusterBurn(m[1], decodeURIComponent(m[2]), json().txHash));
       if (route === "GET /v1/ledger/balances") return send(res, 200, payments.store.balances(url.searchParams.get("prefix") ?? ""));
       return send(res, 404, { error: "not found" });
     } catch (error) {

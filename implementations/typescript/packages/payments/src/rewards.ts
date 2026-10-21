@@ -31,6 +31,8 @@ export interface Delivery {
   qualitySource: QualitySource;
   /** Set when the delivery was served from earlier work; credit goes to whoever made the original. */
   reuseOf?: string;
+  /** The cluster this delivery counts in. A delivery counts in at most one cluster. */
+  clusterId?: string;
 }
 
 export interface Standard { key: string; t0Seconds: number; q0: number; samples: number; source: "network" | "carried" | "declared"; }
@@ -97,7 +99,29 @@ export function computeStandards(deliveries: Delivery[], previous: Record<string
   return out;
 }
 
-export interface ScoredDelivery { id: string; operatorPayeeId: string; factoryId: string; sectionId?: string; seconds: number; t0Seconds?: number; speedup?: number; multiplier?: number; score: number; reason: string; creditedTo: string; }
+/** Scores each delivery against the standards: t₀ × m(speedup) for independently judged work at or above q₀, a royalty for reuse, zero (with the reason) otherwise. */
+export function scoreDeliveries(deliveries: Delivery[], all: Delivery[], standards: Record<string, Standard>, c: Pick<RewardConfig, "beta" | "floor" | "cap" | "acceptedQualitySources" | "reuseRoyaltyFraction">, sectionFor: (operation: string) => string | undefined = () => undefined): ScoredDelivery[] {
+  const byId = new Map(all.map((d) => [d.id, d]));
+  return deliveries.map((d) => {
+    const seconds = durationSeconds(d);
+    const base = { id: d.id, operatorPayeeId: d.operatorPayeeId, factoryId: d.factoryId, sectionId: sectionFor(d.operation), seconds, creditedTo: d.operatorPayeeId, creditedFactoryId: d.factoryId };
+    const std = standards[standardKey(d.operation, d.sizeBand)];
+    if (!d.accepted) return { ...base, score: 0, reason: "not accepted" };
+    if (!c.acceptedQualitySources.includes(d.qualitySource)) return { ...base, score: 0, reason: `quality source ${d.qualitySource} isn't independent` };
+    if (!std) return { ...base, score: 0, reason: "no standard yet for this operation" };
+    if (d.quality < std.q0) return { ...base, t0Seconds: std.t0Seconds, score: 0, reason: `quality ${d.quality} below standard ${std.q0}` };
+    if (d.reuseOf) {
+      const original = byId.get(d.reuseOf);
+      if (!original) return { ...base, t0Seconds: std.t0Seconds, score: 0, reason: "reuse of unknown original" };
+      return { ...base, t0Seconds: std.t0Seconds, creditedTo: original.operatorPayeeId, creditedFactoryId: original.factoryId, score: std.t0Seconds * c.reuseRoyaltyFraction, reason: `reuse royalty to ${original.operatorPayeeId}` };
+    }
+    const speedup = std.t0Seconds / seconds;
+    const m = multiplier(speedup, c);
+    return { ...base, t0Seconds: std.t0Seconds, speedup, multiplier: m, score: std.t0Seconds * m, reason: "scored" };
+  });
+}
+
+export interface ScoredDelivery { id: string; operatorPayeeId: string; factoryId: string; sectionId?: string; seconds: number; t0Seconds?: number; speedup?: number; multiplier?: number; score: number; reason: string; creditedTo: string; /** For reuse royalties, the factory that made the original. */ creditedFactoryId: string; }
 export interface SectionResult { id: string; name: string; budgetQiBase: number; rolloverInQiBase: number; scoreTotal: number; paidQiBase: number; rolloverOutQiBase: number; }
 export interface RewardPeriod {
   schema: "reward-period@1";
@@ -124,26 +148,9 @@ export function closeRewardPeriod(p: { id: string; start: string; end: string; d
   const errors = validateRewardConfig(c);
   if (errors.length) throw new Error(`invalid reward config: ${errors.join("; ")}`);
   const inPeriod = p.deliveries.filter((d) => d.deliveredAt >= p.start && d.deliveredAt <= p.end).sort((a, b) => a.id.localeCompare(b.id));
-  const byId = new Map(p.deliveries.map((d) => [d.id, d]));
   const sectionFor = (op: string) => c.sections.find((s) => !s.operations || s.operations.includes(op));
 
-  const scored: ScoredDelivery[] = inPeriod.map((d) => {
-    const seconds = durationSeconds(d);
-    const base = { id: d.id, operatorPayeeId: d.operatorPayeeId, factoryId: d.factoryId, sectionId: sectionFor(d.operation)?.id, seconds, creditedTo: d.operatorPayeeId };
-    const std = p.standards[standardKey(d.operation, d.sizeBand)];
-    if (!d.accepted) return { ...base, score: 0, reason: "not accepted" };
-    if (!c.acceptedQualitySources.includes(d.qualitySource)) return { ...base, score: 0, reason: `quality source ${d.qualitySource} isn't independent` };
-    if (!std) return { ...base, score: 0, reason: "no standard yet for this operation" };
-    if (d.quality < std.q0) return { ...base, t0Seconds: std.t0Seconds, score: 0, reason: `quality ${d.quality} below standard ${std.q0}` };
-    if (d.reuseOf) {
-      const original = byId.get(d.reuseOf);
-      if (!original) return { ...base, t0Seconds: std.t0Seconds, score: 0, reason: "reuse of unknown original" };
-      return { ...base, t0Seconds: std.t0Seconds, creditedTo: original.operatorPayeeId, score: std.t0Seconds * c.reuseRoyaltyFraction, reason: `reuse royalty to ${original.operatorPayeeId}` };
-    }
-    const speedup = std.t0Seconds / seconds;
-    const m = multiplier(speedup, c);
-    return { ...base, t0Seconds: std.t0Seconds, speedup, multiplier: m, score: std.t0Seconds * m, reason: "scored" };
-  });
+  const scored = scoreDeliveries(inPeriod, p.deliveries, p.standards, c, (op) => sectionFor(op)?.id);
 
   const factoryScore = new Map<string, number>();
   for (const s of scored) factoryScore.set(s.factoryId, (factoryScore.get(s.factoryId) ?? 0) + s.score);

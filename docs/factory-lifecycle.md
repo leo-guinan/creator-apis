@@ -1,6 +1,6 @@
 # Factory lifecycle: sponsorship, mining of revenue, and graduation
 
-**Status:** design spec, not implemented. The time-based Qi pool in [`operator-rewards.md`](operator-rewards.md) is built. Everything here builds on it. All numbers are placeholders to argue over, not decisions.
+**Status:** partly built. The time-based Qi pool ([`operator-rewards.md`](operator-rewards.md)), cluster charters and cluster epochs are implemented; the lifecycle, graduations and sponsorship are still spec. See "Built vs not" at the end. Everything here builds on it. All numbers are placeholders to argue over, not decisions.
 
 A new factory has a double problem: nobody trusts it, and it isn't producing enough to learn. This spec covers how a miner bootstraps a factory through that period, how a cluster of factories shares lumpy revenue the way a mining pool shares blocks, and how the network celebrates a factory coming of age, publicly and checkably, so others want to play and win.
 
@@ -181,7 +181,7 @@ B earns before it has won a customer. The cluster funds its ramp alongside its m
 
 - **Pool hopping:** trailing-window workshares and a minimum tenure before pot eligibility.
 - **Workshare farming:** independent quality, a per-factory cap, and a threshold high enough that junk doesn't count.
-- **Wash sales:** the finder bonus stays below the cost of faking a sale (Stripe fees plus burn), and wins are weighted by customer diversity.
+- **Wash sales:** the finder bonus stays below the cost of faking a sale (Stripe fees plus burn). Implemented rule: a repeat customer earns a factory no second finder bonus in the same epoch; that set-aside goes entirely to the pot.
 - **Free riders:** workshare weight decays after a long stretch with no wins, except during Ignition.
 
 ---
@@ -268,7 +268,8 @@ Each is sealed (sha256 of sorted-key JSON), chained to its predecessor, and dete
 | Lifecycle epochs, proving sets, graduations | Not built |
 | Sponsorship records and splits | Not built |
 | Cluster charter: schema and validator for the invariants | Built (`contracts/cluster-charter.v1.schema.json`, `validateClusterCharter`) |
-| Cluster epochs, finder/workshare split | Not built |
+| Cluster epochs: finder share, trailing-window workshares, tenure, no-win decay, per-factory cap, repeat-customer rule, rollover, burn, sealed chain | Built (`clusters.ts`, `closeClusterEpoch`) |
+| Cluster set-aside at settlement, epoch payouts, burn confirmation | Built (service + `/v1/clusters` routes) |
 | Cluster token contract | Not built; needs audit and legal review first |
 
 Sources: [Proportional Splitting (Aumayr, Avarikioti, Karakostas, Kreder, Shastry)](https://arxiv.org/abs/2503.10185) · [SOAP press release](https://www.theblock.co/press-releases/376064/quai-network-launches-soap-to-reshape-proof-of-work-economics) · [Quai Axe](https://www.quaiaxe.com/)

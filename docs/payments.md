@@ -21,8 +21,11 @@ gross (what the customer paid)
   − platform fee                        bps of gross; default 0
   − tool royalties                      per sale and/or bps of gross, per tool author
   − provider pass-through               third-party API costs the operator paid (receipts with hosting=provider), fiat
+  − cluster set-aside                   if the offer names a cluster the factory belongs to: the charter's share of margin
   = margin                              fiat, split by the offer's shares (default 100% to the creator)
 ```
+
+The cluster set-aside accumulates in the cluster's account. At each epoch close it pays finder shares, the workshare pot and the burn ([`factory-lifecycle.md`](factory-lifecycle.md)).
 
 Operators earn Qi from the period pool, not from each sale. With `qiFrom: "sale"`, operator energy is instead deducted before margin at an energy quote and paid in Qi.
 

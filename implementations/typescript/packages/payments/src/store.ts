@@ -3,6 +3,8 @@ import { dirname } from "node:path";
 import type { OperationReceipt } from "../../contracts/src/index.js";
 import type { EnergyQuote } from "./qi.js";
 import type { Delivery, RewardPeriod } from "./rewards.js";
+import type { ClusterCharter } from "../../contracts/src/index.js";
+import type { ClusterEpoch, Win } from "./clusters.js";
 import type { MarginShare, SettlementLine, ToolRoyalty, Waterfall } from "./settlement.js";
 
 export type Currency = "usd_cents" | "qi_base";
@@ -13,7 +15,7 @@ export type SubscriptionStatus = "none" | "pending" | "active" | "past_due" | "c
 export interface Creator { id: string; email: string; name: string; stripeCustomerId: string; subscription: { id?: string; status: SubscriptionStatus; currentPeriodEnd?: string }; computeBudgetCents: number; computeUsed: Record<string, number>; createdAt: string; }
 /** Anyone who gets paid: creators, operators, tool authors. */
 export interface Payee { id: string; kind: "creator" | "operator" | "tool"; displayName: string; email: string; stripeAccountId?: string; transfersEnabled: boolean; qiAddress?: string; createdAt: string; }
-export interface Offer { id: string; creatorId: string; factoryId: string; name: string; unitAmountCents: number; currency: "usd"; operatorPayeeId: string; tools: ToolRoyalty[]; marginShares: MarginShare[]; platformFeeBps: number; active: boolean; createdAt: string; }
+export interface Offer { id: string; creatorId: string; factoryId: string; clusterId?: string; name: string; unitAmountCents: number; currency: "usd"; operatorPayeeId: string; tools: ToolRoyalty[]; marginShares: MarginShare[]; platformFeeBps: number; active: boolean; createdAt: string; }
 export type OrderStatus = "awaiting_payment" | "paid" | "failed" | "refunded" | "settled";
 export interface Order { id: string; offerId: string; creatorId: string; quantity: number; amountCents: number; status: OrderStatus; checkoutSessionId: string; checkoutUrl: string; paymentIntentId?: string; chargeId?: string; stripeFeeCents?: number; customerEmail?: string; createdAt: string; paidAt?: string; settlementId?: string; flags: string[]; }
 export type MeterStatus = "sent" | "partly_over_budget" | "over_budget" | "not_platform" | "too_old" | "no_subscription" | "not_completed";
@@ -36,10 +38,14 @@ export interface State {
   processedEvents: Record<string, string>;
   deliveries: Record<string, Delivery>;
   rewardPeriods: RewardPeriod[];
+  charters: Record<string, ClusterCharter[]>;
+  clusterWins: Record<string, Win[]>;
+  clusterEpochs: Record<string, ClusterEpoch[]>;
+  clusterBurns: Record<string, { clusterId: string; epochId: string; cents: number; status: "pending" | "confirmed"; txHash?: string; confirmedAt?: string }>;
   journal: JournalEntry[];
 }
 
-const empty = (): State => ({ version: 1, creators: {}, payees: {}, offers: {}, orders: {}, receipts: {}, settlements: {}, payouts: {}, quotes: [], processedEvents: {}, deliveries: {}, rewardPeriods: [], journal: [] });
+const empty = (): State => ({ version: 1, creators: {}, payees: {}, offers: {}, orders: {}, receipts: {}, settlements: {}, payouts: {}, quotes: [], processedEvents: {}, deliveries: {}, rewardPeriods: [], charters: {}, clusterWins: {}, clusterEpochs: {}, clusterBurns: {}, journal: [] });
 
 /** One JSON file, written atomically after every mutation, so entities and the journal never disagree. A reference store, not a production database. */
 export class Store {

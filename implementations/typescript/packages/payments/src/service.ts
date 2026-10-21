@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { validateReceipt, type EnergySource, type OperationReceipt } from "../../contracts/src/index.js";
+import { stableHash, validateCharterAmendment, validateClusterCharter, validateReceipt, type ClusterCharter, type EnergySource, type OperationReceipt } from "../../contracts/src/index.js";
+import { closeClusterEpoch, type ClusterEpoch, type Phase } from "./clusters.js";
 import type { PaymentsGateway, WebhookEvent } from "./gateway.js";
 import { formatQi, isQiAddress, validateQuote, type EnergyQuote } from "./qi.js";
 import { computeWaterfall, type MarginShare, type ToolRoyalty } from "./settlement.js";
@@ -86,7 +87,7 @@ export class CreatorPayments {
 
   // ------------------------------------------------------------ offers + customer checkout at the creator's price
 
-  createOffer(p: { id: string; creatorId: string; factoryId: string; name: string; unitAmountCents: number; operatorPayeeId: string; tools?: ToolRoyalty[]; marginShares?: MarginShare[]; platformFeeBps?: number }): Offer {
+  createOffer(p: { id: string; creatorId: string; factoryId: string; clusterId?: string; name: string; unitAmountCents: number; operatorPayeeId: string; tools?: ToolRoyalty[]; marginShares?: MarginShare[]; platformFeeBps?: number }): Offer {
     this.mustCreator(p.creatorId);
     const shares = p.marginShares ?? [{ payeeId: `creator:${p.creatorId}`, bps: 10_000 }];
     const errors: string[] = [];
@@ -94,8 +95,9 @@ export class CreatorPayments {
     if (shares.reduce((t, m) => t + m.bps, 0) !== 10_000) errors.push("margin shares must sum to 10000 bps");
     for (const id of [p.operatorPayeeId, ...shares.map((m) => m.payeeId), ...(p.tools ?? []).map((t) => t.payeeId)]) if (!this.s.payees[id]) errors.push(`unknown payee ${id}`);
     if ((p.platformFeeBps ?? 0) < 0 || (p.platformFeeBps ?? 0) > 10_000) errors.push("platformFeeBps must be 0..10000");
+    if (p.clusterId && !this.s.charters[p.clusterId]) errors.push(`unknown cluster ${p.clusterId}`);
     if (errors.length) throw new Error(`invalid offer ${p.id}: ${errors.join("; ")}`);
-    return this.store.mutate((s) => (s.offers[p.id] = { id: p.id, creatorId: p.creatorId, factoryId: p.factoryId, name: p.name, unitAmountCents: p.unitAmountCents, currency: "usd", operatorPayeeId: p.operatorPayeeId, tools: p.tools ?? [], marginShares: shares, platformFeeBps: p.platformFeeBps ?? 0, active: true, createdAt: this.nowIso() }));
+    return this.store.mutate((s) => (s.offers[p.id] = { id: p.id, creatorId: p.creatorId, factoryId: p.factoryId, clusterId: p.clusterId, name: p.name, unitAmountCents: p.unitAmountCents, currency: "usd", operatorPayeeId: p.operatorPayeeId, tools: p.tools ?? [], marginShares: shares, platformFeeBps: p.platformFeeBps ?? 0, active: true, createdAt: this.nowIso() }));
   }
 
   async checkoutOffer(offerId: string, p: { quantity?: number; customerEmail?: string } = {}): Promise<Order> {
@@ -246,7 +248,9 @@ export class CreatorPayments {
     const receipts = Object.values(this.s.receipts).map((r) => r.receipt).filter((r) => r.orderRef === orderId);
     const quote = this.latestQuote();
     const quoteErrors = validateQuote(quote, this.cfg.now(), this.cfg.quoteMaxAgeHours);
-    const waterfall = computeWaterfall({ grossCents: order.amountCents, stripeFeeCents: order.stripeFeeCents, quantity: order.quantity, platformFeeBps: offer.platformFeeBps, tools: offer.tools, operatorPayeeId: offer.operatorPayeeId, marginShares: offer.marginShares, receipts, quote: quoteErrors.length ? undefined : quote, acceptEnergy: this.cfg.acceptEnergy, deductEnergy: this.cfg.qiFrom === "sale" });
+    const charter = offer.clusterId ? this.activeCharter(offer.clusterId, order.paidAt ?? this.nowIso()) : undefined;
+    const inCluster = charter?.members.factories.some((f) => f.factoryId === offer.factoryId) ? charter : undefined;
+    const waterfall = computeWaterfall({ clusterSetAside: inCluster ? { clusterId: inCluster.id, bps: inCluster.revenueMining.setAsideBps } : undefined, grossCents: order.amountCents, stripeFeeCents: order.stripeFeeCents, quantity: order.quantity, platformFeeBps: offer.platformFeeBps, tools: offer.tools, operatorPayeeId: offer.operatorPayeeId, marginShares: offer.marginShares, receipts, quote: quoteErrors.length ? undefined : quote, acceptEnergy: this.cfg.acceptEnergy, deductEnergy: this.cfg.qiFrom === "sale" });
     if (waterfall.status === "needs_quote") return { status: "needs_quote", reasons: [`${waterfall.energy.acceptedWh.toFixed(3)} Wh of operator energy needs pricing`, ...quoteErrors] };
     if (!waterfall.checks.linesSumToGross) throw new Error(`settlement for ${orderId} does not reconcile to gross`);
     const id = `stl_${orderId.slice(4)}`;
@@ -261,6 +265,11 @@ export class CreatorPayments {
         s.payouts[pid] = { id: pid, settlementId: id, orderId, payeeId: l.payeeId!, rail: l.rail as "stripe" | "qi", amount: l.rail === "qi" ? l.qiBase! : l.usdCents, currency: l.rail === "qi" ? "qi_base" : "usd_cents", status: "pending", transferGroup: orderId, sourceTransaction: order.chargeId, energyWh: l.energyWh, updatedAt: settlement.at, line: l } satisfies PayoutInstruction;
       });
       s.settlements[id] = settlement;
+      if (inCluster) {
+        const setAside = waterfall.lines.filter((l) => l.kind === "cluster_set_aside").reduce((t, l) => t + l.usdCents, 0);
+        const margin = waterfall.lines.filter((l) => l.kind === "margin").reduce((t, l) => t + l.usdCents, 0) + setAside;
+        (s.clusterWins[inCluster.id] ??= []).push({ id: orderId, factoryId: offer.factoryId, customerKey: stableHash(order.customerEmail?.toLowerCase() ?? `anonymous:${orderId}`).slice(0, 16), marginCents: margin, setAsideCents: setAside, at: order.paidAt ?? settlement.at });
+      }
       s.orders[orderId].settlementId = id;
       s.orders[orderId].status = "settled";
     });
@@ -300,6 +309,61 @@ export class CreatorPayments {
       Object.assign(p, { status: "confirmed", txHash, updatedAt: this.nowIso() });
       this.store.post(s, { id: `qi-paid:${payoutId}`, at: this.nowIso(), kind: "qi_payout", refs: { payout: payoutId, tx: txHash }, postings: [{ account: `payable_qi:${p.payeeId}`, currency: "qi_base", amount: p.amount }, { account: "qi:obligations", currency: "qi_base", amount: -p.amount }] });
       return p;
+    });
+  }
+
+  // ------------------------------------------------------------ clusters: self-governing miners + factories
+
+  /** Registers a cluster's first charter, or an amendment chained to the current version. */
+  registerCharter(charter: ClusterCharter): ClusterCharter {
+    const versions = this.s.charters[charter.id] ?? [];
+    const last = versions.at(-1);
+    if (last && last.version === charter.version) { if (stableHash(last) !== stableHash(charter)) throw new Error(`charter ${charter.id} v${charter.version} already registered differently`); return last; }
+    const errors = last ? validateCharterAmendment(last, charter) : charter.version === 1 ? validateClusterCharter(charter) : ["a new cluster starts at version 1"];
+    const closed = (this.s.clusterEpochs[charter.id] ?? []).at(-1);
+    if (closed && charter.effectiveFrom <= closed.epoch.end) errors.push("an amendment can't take effect inside an epoch that has already closed");
+    if (errors.length) throw new Error(`invalid charter: ${errors.join("; ")}`);
+    return this.store.mutate((s) => { (s.charters[charter.id] ??= []).push(charter); return charter; });
+  }
+
+  activeCharter(clusterId: string, at: string): ClusterCharter | undefined { return [...(this.s.charters[clusterId] ?? [])].reverse().find((c) => c.effectiveFrom <= at); }
+
+  /** Closes a cluster epoch: blocks are the cluster's wins, workshares its members' accepted deliveries; queues payouts and the burn. */
+  closeClusterEpoch(clusterId: string, epoch: { id: string; start: string; end: string }, opts: { phases?: Record<string, Phase>; costCents?: Record<string, number> } = {}): ClusterEpoch {
+    const history = this.s.clusterEpochs[clusterId] ?? [];
+    const existing = history.find((e) => e.epoch.id === epoch.id);
+    if (existing) return existing;
+    if (epoch.end > this.nowIso()) throw new Error("an epoch can't close before it ends");
+    const charter = this.activeCharter(clusterId, epoch.start);
+    if (!charter) throw new Error(`cluster ${clusterId} has no charter in effect at ${epoch.start}`);
+    const countedElsewhere = new Set(Object.entries(this.s.clusterEpochs).filter(([id]) => id !== clusterId).flatMap(([, es]) => es.flatMap((e) => e.deliveryIds)));
+    const membership = (factoryId: string) => Object.keys(this.s.charters).filter((id) => this.activeCharter(id, epoch.start)?.members.factories.some((f) => f.factoryId === factoryId));
+    const all = Object.values(this.s.deliveries);
+    const mine = all.filter((d) => !countedElsewhere.has(d.id) && (d.clusterId ? d.clusterId === clusterId : membership(d.factoryId).length === 1 && membership(d.factoryId)[0] === clusterId));
+    const record = closeClusterEpoch({ charter, epoch, wins: this.s.clusterWins[clusterId] ?? [], deliveries: mine, allDeliveries: all, standards: this.currentStandards(), history, phases: opts.phases, costCents: opts.costCents });
+    this.store.mutate((s) => {
+      (s.clusterEpochs[clusterId] ??= []).push(record);
+      const paid = record.payouts.reduce((t, p) => t + p.totalCents, 0);
+      if (paid + record.burn.cents > 0) this.store.post(s, { id: `cluster-epoch:${clusterId}:${epoch.id}`, at: this.nowIso(), kind: "cluster_epoch", refs: { cluster: clusterId, epoch: epoch.id }, postings: [{ account: `payable:cluster:${clusterId}`, currency: "usd_cents", amount: paid + record.burn.cents }, ...record.payouts.map((p) => ({ account: `payable:creator:${p.creatorId}`, currency: "usd_cents" as const, amount: -p.totalCents })), ...(record.burn.cents ? [{ account: `burn_reserve:cluster:${clusterId}`, currency: "usd_cents" as const, amount: -record.burn.cents }] : [])] });
+      record.payouts.forEach((p, i) => {
+        const pid = `clu_${clusterId}_${epoch.id}_${i}`.replace(/[^A-Za-z0-9_]/g, "");
+        s.payouts[pid] = { id: pid, settlementId: `${clusterId}/${epoch.id}`, orderId: `${clusterId}/${epoch.id}`, payeeId: `creator:${p.creatorId}`, rail: "stripe", amount: p.totalCents, currency: "usd_cents", status: "pending", transferGroup: `${clusterId}:${epoch.id}`, updatedAt: this.nowIso(), line: { kind: "cluster_payout", payeeId: `creator:${p.creatorId}`, rail: "stripe", usdCents: p.totalCents, note: `factory ${p.factoryId}: finder ${p.finderCents}¢ + pot ${p.potCents}¢` } };
+      });
+      if (record.burn.cents > 0) s.clusterBurns[`${clusterId}/${epoch.id}`] = { clusterId, epochId: epoch.id, cents: record.burn.cents, status: "pending" };
+    });
+    return record;
+  }
+
+  /** Records the on-chain buy-and-burn for an epoch. The buy itself happens outside this service. */
+  confirmClusterBurn(clusterId: string, epochId: string, txHash: string) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error("txHash must be a 32-byte hex hash");
+    return this.store.mutate((s) => {
+      const b = s.clusterBurns[`${clusterId}/${epochId}`];
+      if (!b) throw new Error(`no burn pending for ${clusterId} ${epochId}`);
+      if (b.status === "confirmed") { if (b.txHash !== txHash) throw new Error(`burn already confirmed with ${b.txHash}`); return b; }
+      Object.assign(b, { status: "confirmed", txHash, confirmedAt: this.nowIso() });
+      this.store.post(s, { id: `burn:${clusterId}:${epochId}`, at: this.nowIso(), kind: "cluster_burn", refs: { cluster: clusterId, epoch: epochId, tx: txHash }, postings: [{ account: `burn_reserve:cluster:${clusterId}`, currency: "usd_cents", amount: b.cents }, { account: "stripe:balance", currency: "usd_cents", amount: -b.cents }] });
+      return b;
     });
   }
 

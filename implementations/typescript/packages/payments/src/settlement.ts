@@ -19,10 +19,12 @@ export interface WaterfallInput {
   acceptEnergy: Exclude<EnergySource, "unknown">[];
   /** false when operators are paid Qi from the period pool instead of from each sale (the default). */
   deductEnergy?: boolean;
+  /** The factory's cluster takes this share of margin before it's split; it funds the cluster's finder shares, pot and burn. */
+  clusterSetAside?: { clusterId: string; bps: number };
 }
 
-export type LineKind = "stripe_fee" | "platform_fee" | "tool_royalty" | "provider_passthrough" | "energy" | "margin" | "time_reward";
-export interface SettlementLine { kind: LineKind; payeeId?: string; rail: "none" | "platform" | "stripe" | "qi"; usdCents: number; qiBase?: number; energyWh?: number; note: string; }
+export type LineKind = "stripe_fee" | "platform_fee" | "tool_royalty" | "provider_passthrough" | "energy" | "cluster_set_aside" | "margin" | "time_reward" | "cluster_payout";
+export interface SettlementLine { kind: LineKind; payeeId?: string; rail: "none" | "platform" | "stripe" | "qi" | "cluster"; usdCents: number; qiBase?: number; energyWh?: number; note: string; }
 export interface Waterfall {
   status: "ok" | "needs_quote";
   lines: SettlementLine[];
@@ -84,6 +86,8 @@ export function computeWaterfall(input: WaterfallInput): Waterfall {
     lines.push({ kind: "energy", payeeId: input.operatorPayeeId, rail: "qi", usdCents: paid, qiBase, energyWh: energy.acceptedWh, note: `${energy.acceptedWh.toFixed(3)} Wh at ${input.quote.qiPerKwh} Qi/kWh, $${input.quote.usdPerQi}/Qi (${input.quote.source}, ${input.quote.observedAt})` });
     if (priced.usdCents > paid) shortfalls.push({ kind: "energy", payeeId: input.operatorPayeeId, usdCents: priced.usdCents - paid, energyWh: energy.acceptedWh * (1 - paid / priced.usdCents), note: "energy cost the sale didn't cover" });
   }
+
+  if (input.clusterSetAside && input.clusterSetAside.bps > 0) take(bps(left, input.clusterSetAside.bps), { kind: "cluster_set_aside", payeeId: `cluster:${input.clusterSetAside.clusterId}`, rail: "cluster", note: `${input.clusterSetAside.bps} bps of margin to cluster ${input.clusterSetAside.clusterId}` });
 
   const margin = left;
   let assigned = 0;
