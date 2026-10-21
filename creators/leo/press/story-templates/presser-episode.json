@@ -1,0 +1,20 @@
+{
+  "schema": "story-template@1",
+  "id": "presser-episode",
+  "version": 1,
+  "creatorId": "leo",
+  "source": "press-record@1",
+  "title": "{factoryName}: Monday Morning Press Conference, {date}",
+  "logline": "{documented} of {questions} answers held up on the record.",
+  "scenes": [
+    { "id": "cold-open", "title": "Cold open: the answer that didn't hold", "from": "beat", "beatId": "tough", "pick": "highlights", "max": 1 },
+    { "id": "statement", "title": "The statement", "from": "statement", "pick": "all" },
+    { "id": "scoreboard", "title": "Last week's promises, scored", "from": "scoreboard", "pick": "all" },
+    { "id": "score-questions", "title": "Ari counts", "from": "beat", "beatId": "score", "pick": "highlights", "max": 2 },
+    { "id": "tough", "title": "The tough questions", "from": "beat", "beatId": "tough", "pick": "highlights", "max": 4 },
+    { "id": "film", "title": "Film room", "from": "beat", "beatId": "film", "pick": "highlights", "max": 3 },
+    { "id": "game-plan", "title": "On the record for next week", "from": "commitments", "pick": "all" },
+    { "id": "final", "title": "Final question", "from": "beat", "beatId": "final", "pick": "all" }
+  ],
+  "highlightOrder": ["contradicted", "undocumented", "partial", "declined", "documented"]
+}

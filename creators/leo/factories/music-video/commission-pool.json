@@ -1,0 +1,35 @@
+{
+  "id": "music-video-pilot",
+  "factoryId": "music-video",
+  "operation": "create-music-video",
+  "operatorPayeeId": "operator:leo",
+  "miners": [],
+  "tool": {
+    "unit": "slop.cc credit",
+    "usdCents": 3000,
+    "units": 1080,
+    "source": "slop.cc credit purchase on 2026-10-20: $30 for 1,080 credits. The 1,800-credit pack showed no price and is assumed to be the same rate."
+  },
+  "baseline": {
+    "label": "ALL GREEN",
+    "units": 2304,
+    "firstCutUnits": 1160,
+    "fixUnits": 1144,
+    "finishedSeconds": 143.6,
+    "source": "ALL GREEN ledger from the Monday Morning Presser recap: 1,160 credits for the first cut, 1,144 for fixes, 2:24 finished. About $64 all in."
+  },
+  "priorLearningRate": 0.625,
+  "minFitPoints": 3,
+  "maxFixRatio": 0.25,
+  "pricing": "stake",
+  "stake": {
+    "marginBps": 1000,
+    "marginBasis": "projected",
+    "rejectedCostShareBps": 10000,
+    "defaultRemainder": "return"
+  },
+  "rejectionRefundBps": 10000,
+  "minSeconds": 30,
+  "maxSeconds": 300,
+  "quoteValidHours": 24
+}

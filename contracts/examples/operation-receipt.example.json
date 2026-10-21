@@ -1,0 +1,28 @@
+{
+  "schema": "operation-receipt@1",
+  "id": "rcp_example0000000001",
+  "operation": "create-voice",
+  "factoryId": "presser",
+  "runId": "run_example",
+  "status": "completed",
+  "operatorId": "leo",
+  "creatorId": "leo",
+  "orderRef": "ord_example",
+  "artifact": {
+    "id": "art_example",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "schema": "studio-media@1"
+  },
+  "costUsd": 0.012,
+  "energy": {
+    "measuredWh": 0,
+    "providerReportedWh": 0.4,
+    "estimatedWh": 0,
+    "unknownSteps": 0,
+    "methods": []
+  },
+  "hosting": "operator",
+  "startedAt": "2026-10-20T12:00:00.000Z",
+  "finishedAt": "2026-10-20T12:00:02.000Z",
+  "sha256": "e4e7bbca9d61fc98879802951de7622a7fdf6a7cc64746f41eb63ffb72c39cb1"
+}

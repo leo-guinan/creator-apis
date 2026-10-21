@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/leo-guinan/creator-apis/contracts/story-template.v1.schema.json",
+  "title": "story-template@1",
+  "description": "How a creator turns a sealed press record into a story draft. Title and logline tokens: {factoryName} {date} {documented} {questions}.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "creatorId",
+    "source",
+    "title",
+    "logline",
+    "scenes",
+    "highlightOrder"
+  ],
+  "properties": {
+    "schema": {
+      "const": "story-template@1"
+    },
+    "id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "creatorId": {
+      "type": "string"
+    },
+    "source": {
+      "const": "press-record@1"
+    },
+    "title": {
+      "type": "string"
+    },
+    "logline": {
+      "type": "string"
+    },
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "from",
+          "pick"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "from": {
+            "enum": [
+              "statement",
+              "scoreboard",
+              "beat",
+              "commitments"
+            ]
+          },
+          "beatId": {
+            "type": "string"
+          },
+          "pick": {
+            "enum": [
+              "all",
+              "highlights"
+            ]
+          },
+          "max": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "if": {
+          "properties": {
+            "from": {
+              "const": "beat"
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "beatId"
+          ]
+        }
+      }
+    },
+    "highlightOrder": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "documented",
+          "partial",
+          "undocumented",
+          "contradicted",
+          "declined"
+        ]
+      }
+    }
+  }
+}

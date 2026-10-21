@@ -53,11 +53,17 @@ See:
 - [`docs/core-flow.md`](docs/core-flow.md) — the end-to-end question-to-story flow and its states.
 - [`docs/extension-contract.md`](docs/extension-contract.md) — the draft handoff boundary for downstream creative workflows, including movies.
 - [`implementations/python-mcp/README.md`](implementations/python-mcp/README.md) — the first local-only Python MCP reference implementation, including its calibration-gated profile contribution flow and verification limits.
+- [`docs/creators-and-factories.md`](docs/creators-and-factories.md) — what lives at the creator level (stories, personas, payments) versus in factories (operations), and how agents move between them.
+- [`docs/payments.md`](docs/payments.md) — Stripe subscriptions, metered compute, customer checkout and Connect payouts.
+- [`docs/operator-rewards.md`](docs/operator-rewards.md) — paying factory operators in Qi from a time-based pool.
+- [`docs/factory-lifecycle.md`](docs/factory-lifecycle.md) — design spec: miners bootstrapping factories, clusters mining revenue, graduations and the burn ritual.
+- [`contracts/`](contracts/README.md) — JSON Schemas shared with Internet Factories: agent cards, press corps, story templates, operation receipts.
+- [`implementations/typescript/README.md`](implementations/typescript/README.md) — the TypeScript reference for contracts, creator press content and payments.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to propose architecture and implementations.
 
 ## Architecture status
 
-This repository remains a public architecture draft. A local Python MCP reference implementation now exists under [`implementations/python-mcp`](implementations/python-mcp/README.md); it demonstrates verified-email profiles, privacy-bounded self-reported contributions, and a calibrated-evaluation lock for owner-profile auto-delivery. It is not a deployed service, and client-reported evaluator results or lock phrases are not independently verified human consent. The documents describe the intended broader system; they do not assert that a complete knowledge graph, production curiosity engine, OpenAI-compatible endpoint, movie workflow, auction, or reward-settlement system is currently deployed. Each implementation must report what is tested, what is live, and what remains unknown.
+This repository remains a public architecture draft. A local Python MCP reference implementation now exists under [`implementations/python-mcp`](implementations/python-mcp/README.md); it demonstrates verified-email profiles, privacy-bounded self-reported contributions, and a calibrated-evaluation lock for owner-profile auto-delivery. A TypeScript reference under [`implementations/typescript`](implementations/typescript/README.md) adds the shared factory contracts, Leo's press corps as creator content, and payments: Stripe subscriptions, metered compute, customer checkout and Connect payouts, plus Qi settlement for operator energy. It is tested against a fake gateway in test mode only; no live payments, Qi transfers or deployment are claimed. The Python MCP service is not a deployed service, and client-reported evaluator results or lock phrases are not independently verified human consent. The documents describe the intended broader system; they do not assert that a complete knowledge graph, production curiosity engine, OpenAI-compatible endpoint, movie workflow, auction, or reward-settlement system is currently deployed. Each implementation must report what is tested, what is live, and what remains unknown.
 
 ## Reuse and contribution status
 
