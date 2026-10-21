@@ -73,6 +73,10 @@ A closed period is a sealed `reward-period@1` record. It contains:
 
 It's hashed and chained to the previous period. Closing is deterministic, so any operator can recompute their pay from the same inputs, and a delivery can't be added to a period after it closes.
 
+## Next: lifecycle, sponsorship and clusters
+
+The pool is the base layer. [`factory-lifecycle.md`](factory-lifecycle.md) specifies what builds on it: miners sponsoring factories through a measured lifecycle, clusters sharing revenue the way mining pools share blocks, and graduation milestones celebrated at the press conference.
+
 ## Per-sale energy, still available
 
 `qiFrom: "sale"` restores the earlier model, where measured operating energy is deducted from each sale at an energy quote and paid in Qi. The default is `"pool"`: sales don't deduct energy, and energy readings stay in the operator statement as evidence of efficiency.

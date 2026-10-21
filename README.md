@@ -55,7 +55,8 @@ See:
 - [`implementations/python-mcp/README.md`](implementations/python-mcp/README.md) — the first local-only Python MCP reference implementation, including its calibration-gated profile contribution flow and verification limits.
 - [`docs/creators-and-factories.md`](docs/creators-and-factories.md) — what lives at the creator level (stories, personas, payments) versus in factories (operations), and how agents move between them.
 - [`docs/payments.md`](docs/payments.md) — Stripe subscriptions, metered compute, customer checkout and Connect payouts.
-- [`docs/operator-rewards.md`](docs/operator-rewards.md) — paying factory operators for operating energy in Qi and margin in fiat.
+- [`docs/operator-rewards.md`](docs/operator-rewards.md) — paying factory operators in Qi from a time-based pool.
+- [`docs/factory-lifecycle.md`](docs/factory-lifecycle.md) — design spec: miners bootstrapping factories, clusters mining revenue, graduations and the burn ritual.
 - [`contracts/`](contracts/README.md) — JSON Schemas shared with Internet Factories: agent cards, press corps, story templates, operation receipts.
 - [`implementations/typescript/README.md`](implementations/typescript/README.md) — the TypeScript reference for contracts, creator press content and payments.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to propose architecture and implementations.
