@@ -76,3 +76,26 @@ test("stories live with the creator: a package can't be approved until the manag
   assert.equal(approveStory(consented, "leo", "2026-10-20T00:00:00.000Z").status, "approved");
   assert.ok(packageStory({ ...draft, provenance: [] }, { creatorId: "leo", managerId: "leo", fictionBoundary: "x", managerConsent: "granted" }).unresolved.some((u) => /not in the draft's provenance/.test(u)));
 });
+
+test("cluster charters: everything configurable, invariants enforced", async () => {
+  const { validateClusterCharter, validateCharterAmendment } = await import("../packages/contracts/src/index.js");
+  const charter = read<import("../packages/contracts/src/index.js").ClusterCharter>("contracts/examples/cluster-charter.example.json");
+  assert.deepEqual(check("cluster-charter.v1.schema.json", charter), []);
+  assert.deepEqual(validateClusterCharter(charter), []);
+  // A very different structure is fine: open, miner-free, no sponsorship burn, daily everything.
+  const coop = { ...charter, id: "open-coop", members: { miners: [], factories: [{ factoryId: "f1", creatorId: "ana", sponsors: [] }] }, admission: { mode: "open" as const }, epochs: { ignition: "P1D", online: "P1D", production: "P1D", mature: "P1D" }, revenueMining: { ...charter.revenueMining, finderBps: 2000, burnBps: 0 } };
+  assert.deepEqual(check("cluster-charter.v1.schema.json", coop), []);
+  assert.deepEqual(validateClusterCharter(coop), []);
+  // Invariants can't be configured away.
+  assert.match(validateClusterCharter({ ...charter, quality: { ...charter.quality, acceptedSources: ["self"] } }).join(), /self-graded/);
+  assert.match(validateClusterCharter({ ...charter, lifecycle: { ...charter.lifecycle, bountySplit: { factoryBps: 9000, sponsorBps: 2500, contributorsBps: 0, burnBps: 0 } } }).join(), /bounty split/);
+  assert.match(validateClusterCharter({ ...charter, sponsorship: { ...charter.sponsorship, stages: { ...charter.sponsorship.stages, mature: { name: "m", minerBps: 5000, factoryBps: 5000, burnBps: 500 } } } }).join(), /stage mature/);
+  assert.match(validateClusterCharter({ ...charter, amendments: { approvalBps: 5000, effectiveAfterEpochs: 0 } }).join(), /retroactively/);
+  assert.match(validateClusterCharter({ ...charter, members: { ...charter.members, factories: [{ factoryId: "x", creatorId: "y", sponsors: ["miner:ghost"] }] } }).join(), /not a member miner/);
+  // Amendments chain to the previous version and only take effect later.
+  const { stableHash } = await import("../packages/contracts/src/index.js");
+  const v2 = { ...charter, version: 2, previousVersionHash: stableHash(charter), effectiveFrom: "2026-11-02T00:00:00.000Z", revenueMining: { ...charter.revenueMining, finderBps: 5000 } };
+  assert.deepEqual(validateCharterAmendment(charter, v2), []);
+  assert.match(validateCharterAmendment(charter, { ...v2, effectiveFrom: "2026-10-01T00:00:00.000Z" }).join(), /after the version it replaces/);
+  assert.match(validateCharterAmendment(charter, { ...v2, previousVersionHash: "0".repeat(64) }).join(), /hash of the previous version/);
+});

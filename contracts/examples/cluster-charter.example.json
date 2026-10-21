@@ -1,0 +1,128 @@
+{
+  "schema": "cluster-charter@1",
+  "id": "monday-morning-cluster",
+  "version": 1,
+  "name": "Monday Morning Cluster (example defaults)",
+  "effectiveFrom": "2026-10-26T00:00:00.000Z",
+  "members": {
+    "miners": [
+      {
+        "id": "miner:example-rig",
+        "qiAddress": "0x0080000000000000000000000000000000000001"
+      }
+    ],
+    "factories": [
+      {
+        "factoryId": "presser",
+        "creatorId": "leo",
+        "sponsors": [
+          "miner:example-rig"
+        ]
+      },
+      {
+        "factoryId": "research-factory",
+        "creatorId": "leo",
+        "sponsors": []
+      }
+    ]
+  },
+  "admission": {
+    "mode": "invite",
+    "approvalBps": 5000
+  },
+  "exit": {
+    "noticeEpochs": 2
+  },
+  "epochs": {
+    "ignition": "P1D",
+    "online": "P1W",
+    "production": "P1W",
+    "mature": "P4W"
+  },
+  "quality": {
+    "acceptedSources": [
+      "customer",
+      "network_evaluator",
+      "press_documented"
+    ],
+    "defaultQ0": 0.8
+  },
+  "rewardsCurve": {
+    "beta": 0.25,
+    "floor": 0.5,
+    "cap": 1.75,
+    "minSamples": 5
+  },
+  "lifecycle": {
+    "firstLight": {
+      "minAccepted": 10,
+      "minDocumentedRate": 0.5,
+      "bountyQiBase": 10000
+    },
+    "steadyState": {
+      "minStability": 0.85,
+      "consecutiveEpochs": 3,
+      "maxAttemptsPerKeeper": 2,
+      "bountyQiBase": 100000
+    },
+    "lindy": {
+      "epochs": 12,
+      "bountyQiBase": 50000
+    },
+    "lineage": {
+      "bountyQiBase": 100000
+    },
+    "bountySplit": {
+      "factoryBps": 4000,
+      "sponsorBps": 2500,
+      "contributorsBps": 2500,
+      "burnBps": 1000
+    }
+  },
+  "sponsorship": {
+    "returnRateBps": 2000,
+    "paybackMultiple": 1.5,
+    "stages": {
+      "beforePayback": {
+        "name": "before payback",
+        "minerBps": 6000,
+        "factoryBps": 3500,
+        "burnBps": 500
+      },
+      "afterPayback": {
+        "name": "after payback",
+        "minerBps": 2000,
+        "factoryBps": 7000,
+        "burnBps": 1000
+      },
+      "mature": {
+        "name": "mature",
+        "minerBps": 1500,
+        "factoryBps": 6500,
+        "burnBps": 2000
+      }
+    },
+    "burnCurve": {
+      "baseBps": 500,
+      "bpsPerDoubling": 150,
+      "maxBps": 2000
+    },
+    "demandSubsidy": false
+  },
+  "revenueMining": {
+    "setAsideBps": 2000,
+    "burnBps": 2000,
+    "finderBps": 6000,
+    "workshareWindowEpochs": 4,
+    "minTenureEpochs": 1,
+    "perFactoryCapBps": 5000,
+    "noWinDecayEpochs": 12
+  },
+  "token": {
+    "burnSchedule": "ritual"
+  },
+  "amendments": {
+    "approvalBps": 6667,
+    "effectiveAfterEpochs": 1
+  }
+}

@@ -6,6 +6,8 @@ A new factory has a double problem: nobody trusts it, and it isn't producing eno
 
 The principle throughout: **relationships are the unit, and every relationship produces sealed, recomputable records.**
 
+**Clusters are the unit of organization.** A cluster is a collection of miners and factories that governs itself through a charter (section 5). Every number in this spec is a *default* a cluster can change. The protocol fixes only the invariants that keep outcomes honest and comparable, so networks can structure themselves however they like and compete on results.
+
 ---
 
 ## 1. Lifecycle
@@ -98,14 +100,62 @@ A miner may subsidize customer prices during the ramp, so real jobs, which teach
 
 ## 5. Clusters: mining of revenue
 
-Revenue is lumpy: which factory wins a customer is as unpredictable as who finds a block. A **cluster** of factories pools that variance the way a mining pool does. It uses the mechanism from Quai's own research: Proportional Splitting splits each block height's reward among the block and its workshares in proportion to their work. Fiat revenue plays the role that the parent chain plays in SOAP.
+A **cluster** is a collection of miners and factories. It decides its own structure in a `cluster-charter@1` ([schema](../contracts/cluster-charter.v1.schema.json)):
+- who can join and how;
+- the epoch cadence for each phase;
+- graduation criteria and bounties;
+- sponsorship terms;
+- the revenue-mining split;
+- the reward curve;
+- which quality sources count;
+- its token and burn;
+- how the charter itself changes.
+
+Clusters then compete on outcomes. Miners and factories can leave for a better-run cluster, the way miners switch pools, which keeps charters honest.
+
+### Fixed by the protocol (not configurable)
+
+These keep outcomes trustworthy and comparable across clusters:
+
+1. **Sealed, recomputable records.** Every epoch, milestone, sponsorship and split is sealed, chained, and deterministic from its inputs.
+2. **No self-graded quality.** A charter can choose its quality sources, but `self` is never one of them.
+3. **Each delivery counts once.** A factory may belong to several clusters, but an accepted delivery is attributed to exactly one.
+4. **No retroactive changes.** Charter amendments take effect from a future epoch, never a past one.
+5. **No negative payouts, nothing from nowhere.** Splits only divide what came in. Anything unpaid rolls over, and a declared burn is executed and its transaction recorded.
+6. **Standard outcome metrics.** Every cluster publishes the same scoreboard, so clusters can be compared:
+   - accepted outcomes per dollar of total work (the win condition from the deck);
+   - time to First Light and to Steady State;
+   - survival rate;
+   - burn per epoch;
+   - cost per accepted outcome.
+
+### Configurable (charter defaults shown in this spec)
+
+Everything else, including:
+- membership and admission;
+- exit notice;
+- phase cadences;
+- milestone thresholds and bounties;
+- sponsorship return rate, payback multiple and split schedule;
+- burn curve;
+- set-aside, burn and finder shares;
+- workshare window, tenure, caps and decay;
+- reward curve constants;
+- token and burn destination;
+- amendment rules.
+
+A cluster can be miner-led, run like a co-op, invite-only, open, or specialized in one kind of factory. The protocol doesn't care, as long as the invariants hold.
+
+### Mining of revenue
+
+Revenue is lumpy: which factory wins a customer is as unpredictable as who finds a block. A cluster pools that variance the way a mining pool does. It uses the mechanism from Quai's own research: Proportional Splitting splits each block height's reward among the block and its workshares in proportion to their work. Fiat revenue plays the role that the parent chain plays in SOAP.
 
 | Mining | Factory cluster |
 |---|---|
 | Finding a block | Winning a paid customer order |
 | Workshare | Accepted artifact meeting q₀, scored in standard-seconds |
 | Difficulty | The standard t₀ for each kind of work |
-| Pool operator | The sponsoring miner |
+| Pool operator | The cluster, as its charter defines it |
 | SOAP buy-and-burn | Revenue set-aside buys the cluster token, burned at the ritual |
 
 ### Each epoch
@@ -185,6 +235,7 @@ Each is sealed (sha256 of sorted-key JSON), chained to its predecessor, and dete
 |---|---|---|
 | `lifecycle-epoch@1` | factory × epoch | Attempts, accepted, attempts per keeper, proving-set results and stability, phase, any milestone reached |
 | `sponsorship@1` | miner × factory × epoch | Qi paid (tx hashes), margin, return, conversion rate, split and why (payback progress, burn level), QUAI tx hashes; signed by both parties |
+| `cluster-charter@1` | cluster × version | Members, every configurable parameter, amendment rules; each version effective from a stated epoch |
 | `cluster-epoch@1` | cluster × epoch | Wins (blocks), finder shares, workshares by factory, pot split, burn amount and tx hash |
 | `milestone@1` | factory × milestone | Criteria met, the evidence for each, bounty split, burn tx hash, story package id |
 | `miner-portfolio@1` | miner | Running record of sponsorships, graduations, survivals, burns |
@@ -202,7 +253,7 @@ Each is sealed (sha256 of sorted-key JSON), chained to its predecessor, and dete
 ## 10. Open questions
 
 1. **What counts as a block?** Paid orders only, or also milestones? This spec includes milestones as their own block type.
-2. **Who forms clusters?** Miner-led, by factory type, or open membership?
+2. ~~Who forms clusters?~~ Settled: any collection of miners and factories, self-governed by a charter.
 3. **Proving sets:** who selects them, and how are they kept from leaking into training?
 4. **Where independent quality comes from:** customer acceptance, network evaluators, or press-conference documentation. Each needs an attestation format.
 5. **Payback valuation:** Qi→QUAI rate at payment time versus at payback time.
@@ -216,6 +267,7 @@ Each is sealed (sha256 of sorted-key JSON), chained to its predecessor, and dete
 | Operation receipts with energy, press conferences, story drafts | Built (Internet Factories) |
 | Lifecycle epochs, proving sets, graduations | Not built |
 | Sponsorship records and splits | Not built |
+| Cluster charter: schema and validator for the invariants | Built (`contracts/cluster-charter.v1.schema.json`, `validateClusterCharter`) |
 | Cluster epochs, finder/workshare split | Not built |
 | Cluster token contract | Not built; needs audit and legal review first |
 
