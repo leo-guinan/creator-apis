@@ -102,6 +102,11 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "parentFactoryId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A member factory that bootstrapped this one; it earns the Lineage bounty when this factory reaches Steady State."
               }
             }
           }
@@ -366,6 +371,24 @@
               "maximum": 10000
             }
           }
+        },
+        "maxAttemptsPerEpoch": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Evaluated attempts beyond this per factory per epoch don't count."
+        },
+        "minProvingCoverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Share of the proving set that must be rerun for stability to be measured (default 0.8)."
+        },
+        "stabilityBasis": {
+          "enum": [
+            "verdict",
+            "output_hash"
+          ],
+          "description": "verdict: reruns of an input agree on pass/fail (generative work). output_hash: reruns produce identical output (deterministic work). Default verdict."
         }
       }
     },

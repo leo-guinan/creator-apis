@@ -61,6 +61,12 @@ export function createPaymentsServer(payments: CreatorPayments, opts: ServerOpti
       if ((m = route.match(/^POST \/v1\/clusters\/([^/]+)\/epochs\/close$/))) { const b = json(); return send(res, 200, payments.closeClusterEpoch(m[1], b.epoch, { phases: b.phases, costCents: b.costCents })); }
       if ((m = route.match(/^GET \/v1\/clusters\/([^/]+)\/epochs$/))) return send(res, 200, payments.store.state.clusterEpochs[m[1]] ?? []);
       if ((m = route.match(/^POST \/v1\/clusters\/([^/]+)\/epochs\/([^/]+)\/burn$/))) return send(res, 200, payments.confirmClusterBurn(m[1], decodeURIComponent(m[2]), json().txHash));
+      if ((m = route.match(/^POST \/v1\/clusters\/([^/]+)\/factories\/([^/]+)\/proving-set$/))) return send(res, 201, payments.registerProvingSet(m[1], decodeURIComponent(m[2]), json().inputHashes));
+      if (route === "POST /v1/proving-runs") return send(res, 201, payments.recordProvingRun(json()));
+      if (route === "POST /v1/press-records") return send(res, 201, payments.recordPressRecord(json()));
+      if ((m = route.match(/^POST \/v1\/clusters\/([^/]+)\/close$/))) { const b = json(); return send(res, 200, payments.closeEpoch(m[1], b.epoch, { costCents: b.costCents })); }
+      if ((m = route.match(/^GET \/v1\/clusters\/([^/]+)\/epochs\/([^/]+)\/agenda$/))) return send(res, 200, payments.ritualAgenda(m[1], decodeURIComponent(m[2])));
+      if ((m = route.match(/^POST \/v1\/milestones\/([^/]+)\/burn$/))) return send(res, 200, payments.confirmMilestoneBurn(decodeURIComponent(m[1]), json().txHash));
       if (route === "GET /v1/ledger/balances") return send(res, 200, payments.store.balances(url.searchParams.get("prefix") ?? ""));
       return send(res, 404, { error: "not found" });
     } catch (error) {

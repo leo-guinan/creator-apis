@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { stableHash, validateCharterAmendment, validateClusterCharter, validateReceipt, type ClusterCharter, type EnergySource, type OperationReceipt } from "../../contracts/src/index.js";
 import { closeClusterEpoch, type ClusterEpoch, type Phase } from "./clusters.js";
+import { closeLifecycleEpoch, lifecycleMetrics, sealProvingSet, type LifecycleEpoch, type Milestone, type PressEvidence, type ProvingRun, type ProvingSet } from "./lifecycle.js";
 import type { PaymentsGateway, WebhookEvent } from "./gateway.js";
 import { formatQi, isQiAddress, validateQuote, type EnergyQuote } from "./qi.js";
 import { computeWaterfall, type MarginShare, type ToolRoyalty } from "./settlement.js";
@@ -69,7 +70,7 @@ export class CreatorPayments {
   // ------------------------------------------------------------ payees (Connect recipients) + Qi addresses
 
   async registerPayee(p: { id: string; kind: Payee["kind"]; displayName: string; email: string; country?: string; qiAddress?: string }): Promise<{ payee: Payee; onboardingUrl: string }> {
-    if (!/^(creator|operator|tool):[a-z0-9][a-z0-9-]{0,63}$/.test(p.id) || !p.id.startsWith(`${p.kind}:`)) throw new Error("payee id must look like <kind>:<slug>");
+    if (!/^(creator|operator|tool|miner):[a-z0-9][a-z0-9-]{0,63}$/.test(p.id) || !p.id.startsWith(`${p.kind}:`)) throw new Error("payee id must look like <kind>:<slug>");
     if (p.qiAddress && !isQiAddress(p.qiAddress)) throw new Error(`${p.qiAddress} is not a Qi-ledger address`);
     let payee = this.s.payees[p.id];
     if (!payee) {
@@ -329,7 +330,7 @@ export class CreatorPayments {
   activeCharter(clusterId: string, at: string): ClusterCharter | undefined { return [...(this.s.charters[clusterId] ?? [])].reverse().find((c) => c.effectiveFrom <= at); }
 
   /** Closes a cluster epoch: blocks are the cluster's wins, workshares its members' accepted deliveries; queues payouts and the burn. */
-  closeClusterEpoch(clusterId: string, epoch: { id: string; start: string; end: string }, opts: { phases?: Record<string, Phase>; costCents?: Record<string, number> } = {}): ClusterEpoch {
+  closeClusterEpoch(clusterId: string, epoch: { id: string; start: string; end: string }, opts: { phases?: Record<string, Phase>; costCents?: Record<string, number>; lifecycleMetrics?: { timeToFirstLightDays: number | null; timeToSteadyStateDays: number | null; survivalRate: number | null } } = {}): ClusterEpoch {
     const history = this.s.clusterEpochs[clusterId] ?? [];
     const existing = history.find((e) => e.epoch.id === epoch.id);
     if (existing) return existing;
@@ -340,7 +341,7 @@ export class CreatorPayments {
     const membership = (factoryId: string) => Object.keys(this.s.charters).filter((id) => this.activeCharter(id, epoch.start)?.members.factories.some((f) => f.factoryId === factoryId));
     const all = Object.values(this.s.deliveries);
     const mine = all.filter((d) => !countedElsewhere.has(d.id) && (d.clusterId ? d.clusterId === clusterId : membership(d.factoryId).length === 1 && membership(d.factoryId)[0] === clusterId));
-    const record = closeClusterEpoch({ charter, epoch, wins: this.s.clusterWins[clusterId] ?? [], deliveries: mine, allDeliveries: all, standards: this.currentStandards(), history, phases: opts.phases, costCents: opts.costCents });
+    const record = closeClusterEpoch({ charter, epoch, wins: this.s.clusterWins[clusterId] ?? [], deliveries: mine, allDeliveries: all, standards: this.currentStandards(), history, phases: opts.phases, costCents: opts.costCents, lifecycleMetrics: opts.lifecycleMetrics });
     this.store.mutate((s) => {
       (s.clusterEpochs[clusterId] ??= []).push(record);
       const paid = record.payouts.reduce((t, p) => t + p.totalCents, 0);
@@ -365,6 +366,108 @@ export class CreatorPayments {
       this.store.post(s, { id: `burn:${clusterId}:${epochId}`, at: this.nowIso(), kind: "cluster_burn", refs: { cluster: clusterId, epoch: epochId, tx: txHash }, postings: [{ account: `burn_reserve:cluster:${clusterId}`, currency: "usd_cents", amount: b.cents }, { account: "stripe:balance", currency: "usd_cents", amount: -b.cents }] });
       return b;
     });
+  }
+
+  // ------------------------------------------------------------ lifecycle: proving sets, graduations, the ritual
+
+  /** Registers (or re-versions) a factory's proving set. A new version resets the stability streak. */
+  registerProvingSet(clusterId: string, factoryId: string, inputHashes: string[]): ProvingSet {
+    const charter = this.activeCharter(clusterId, this.nowIso());
+    if (!charter?.members.factories.some((f) => f.factoryId === factoryId)) throw new Error(`${factoryId} is not a member of ${clusterId}`);
+    const key = `${clusterId}/${factoryId}`;
+    const prev = this.s.provingSets[key]?.at(-1);
+    const set = sealProvingSet({ id: `ps_${clusterId}_${factoryId}_v${(prev?.version ?? 0) + 1}`, clusterId, factoryId, version: (prev?.version ?? 0) + 1, inputHashes: [...inputHashes].sort(), registeredAt: this.nowIso() });
+    return this.store.mutate((s) => { (s.provingSets[key] ??= []).push(set); return set; });
+  }
+
+  recordProvingRun(run: ProvingRun): ProvingRun {
+    const set = Object.values(this.s.provingSets).flat().find((p) => p.id === run.provingSetId);
+    const e: string[] = [];
+    if (!set || set.factoryId !== run.factoryId) e.push(`unknown proving set ${run.provingSetId} for ${run.factoryId}`);
+    else if (!set.inputHashes.includes(run.inputHash)) e.push("input is not in the proving set");
+    if (typeof run.passed !== "boolean" || !run.outputHash || Number.isNaN(Date.parse(run.at))) e.push("passed, outputHash and at are required");
+    if (this.s.provingRuns[run.id]) e.push(`proving run ${run.id} already recorded`);
+    if (e.length) throw new Error(`invalid proving run: ${e.join("; ")}`);
+    return this.store.mutate((s) => (s.provingRuns[run.id] = { ...run }));
+  }
+
+  /** Accepts a sealed press record from a factory, verifies its hash, and keeps the summary as evidence. */
+  recordPressRecord(record: { schema: string; id: string; factoryId: string; heldAt: string; summary: { documentedRate: number }; hash: string }): PressEvidence {
+    const { hash, ...rest } = record;
+    if (record.schema !== "press-record@1" || stableHash(rest) !== hash) throw new Error("press record hash does not match its contents");
+    const list = this.s.pressEvidence[record.factoryId] ?? [];
+    const existing = list.find((p) => p.recordId === record.id);
+    if (existing) return existing;
+    return this.store.mutate((s) => { const ev = { recordId: record.id, recordHash: hash, factoryId: record.factoryId, documentedRate: record.summary.documentedRate, heldAt: record.heldAt }; (s.pressEvidence[record.factoryId] ??= []).push(ev); return ev; });
+  }
+
+  /**
+   * The full epoch close: each member factory's lifecycle epoch (phase, stability, milestones and their Qi bounties),
+   * then the cluster epoch using the phases at the start of the epoch and the lifecycle metrics.
+   */
+  closeEpoch(clusterId: string, epoch: { id: string; start: string; end: string }, opts: { costCents?: Record<string, number> } = {}): { lifecycle: LifecycleEpoch[]; milestones: Milestone[]; clusterEpoch: ClusterEpoch } {
+    if (epoch.end > this.nowIso()) throw new Error("an epoch can't close before it ends");
+    const charter = this.activeCharter(clusterId, epoch.start);
+    if (!charter) throw new Error(`cluster ${clusterId} has no charter in effect at ${epoch.start}`);
+    const all = Object.values(this.s.deliveries);
+    const records: LifecycleEpoch[] = [];
+    const newMilestones: Milestone[] = [];
+    for (const f of charter.members.factories) {
+      const key = `${clusterId}/${f.factoryId}`;
+      const history = this.s.lifecycle[key] ?? [];
+      const done = history.find((r) => r.epoch.id === epoch.id);
+      if (done) { records.push(done); continue; }
+      const awarded = this.s.milestones.filter((m) => m.clusterId === clusterId && m.factoryId === f.factoryId && !m.childFactoryId).map((m) => m.kind);
+      const { record, milestones } = closeLifecycleEpoch({ charter, factoryId: f.factoryId, epoch, deliveries: all, provingSets: this.s.provingSets[key] ?? [], provingRuns: Object.values(this.s.provingRuns).filter((r) => r.factoryId === f.factoryId), press: this.s.pressEvidence[f.factoryId] ?? [], standards: this.currentStandards(), history, awarded });
+      const fresh = milestones.filter((m) => !this.s.milestones.some((x) => x.id === m.id));
+      this.store.mutate((s) => {
+        (s.lifecycle[key] ??= []).push(record);
+        for (const m of fresh) {
+          s.milestones.push(m);
+          const payees = [m.bounty.factory, ...m.bounty.sponsors, ...m.bounty.contributors].filter((p) => p.qiBase > 0);
+          const paid = payees.reduce((t, p) => t + p.qiBase, 0);
+          this.store.post(s, { id: `milestone:${m.id}`, at: this.nowIso(), kind: "milestone_bounty", refs: { milestone: m.id }, postings: [{ account: "qi:obligations", currency: "qi_base", amount: paid + m.bounty.burnQiBase }, ...payees.map((p) => ({ account: `payable_qi:${p.payeeId}`, currency: "qi_base" as const, amount: -p.qiBase })), ...(m.bounty.burnQiBase ? [{ account: "qi:burn_reserve", currency: "qi_base" as const, amount: -m.bounty.burnQiBase }] : [])] });
+          payees.forEach((p, i) => { const pid = `${m.id}_${i}`.replace(/[^A-Za-z0-9_]/g, ""); s.payouts[pid] = { id: pid, settlementId: m.id, orderId: m.id, payeeId: p.payeeId, rail: "qi", amount: p.qiBase, currency: "qi_base", status: "pending", transferGroup: m.id, updatedAt: this.nowIso(), line: { kind: "time_reward", payeeId: p.payeeId, rail: "qi", usdCents: 0, qiBase: p.qiBase, note: `${m.kind} bounty for ${m.factoryId}` } }; });
+          if (m.bounty.burnQiBase) s.milestoneBurns[m.id] = { milestoneId: m.id, qiBase: m.bounty.burnQiBase, status: "pending" };
+        }
+      });
+      records.push(record);
+      newMilestones.push(...fresh);
+    }
+    const phases = Object.fromEntries(records.map((r) => [r.factoryId, r.phaseBefore]));
+    const histories = charter.members.factories.map((f) => this.s.lifecycle[`${clusterId}/${f.factoryId}`] ?? []).filter((h) => h.length);
+    const metrics = lifecycleMetrics(histories, this.s.milestones.filter((m) => m.clusterId === clusterId));
+    const clusterEpoch = this.closeClusterEpoch(clusterId, epoch, { phases, costCents: opts.costCents, lifecycleMetrics: metrics });
+    return { lifecycle: records, milestones: newMilestones, clusterEpoch };
+  }
+
+  confirmMilestoneBurn(milestoneId: string, txHash: string) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new Error("txHash must be a 32-byte hex hash");
+    return this.store.mutate((s) => {
+      const b = s.milestoneBurns[milestoneId];
+      if (!b) throw new Error(`no burn pending for ${milestoneId}`);
+      if (b.status === "confirmed") { if (b.txHash !== txHash) throw new Error(`burn already confirmed with ${b.txHash}`); return b; }
+      Object.assign(b, { status: "confirmed", txHash });
+      this.store.post(s, { id: `milestone-burn:${milestoneId}`, at: this.nowIso(), kind: "milestone_burn", refs: { milestone: milestoneId, tx: txHash }, postings: [{ account: "qi:burn_reserve", currency: "qi_base", amount: b.qiBase }, { account: "qi:obligations", currency: "qi_base", amount: -b.qiBase }] });
+      return b;
+    });
+  }
+
+  /** The running order for the ritual at the press conference: graduations first, then the scoreboard, results and the burn. */
+  ritualAgenda(clusterId: string, epochId: string) {
+    const epoch = (this.s.clusterEpochs[clusterId] ?? []).find((e) => e.epoch.id === epochId);
+    if (!epoch) throw new Error(`epoch ${epochId} isn't closed for ${clusterId}`);
+    const graduations = this.s.milestones.filter((m) => m.clusterId === clusterId && m.epochId === epochId);
+    const burn = this.s.clusterBurns[`${clusterId}/${epochId}`];
+    return {
+      clusterId, epochId, epochHash: epoch.hash,
+      beats: [
+        ...graduations.map((m) => ({ beat: "graduation", kind: m.kind, factoryId: m.factoryId, childFactoryId: m.childFactoryId, milestoneId: m.id, milestoneHash: m.hash, evidence: m.evidence, bountyQiBase: m.bounty.qiBase })),
+        { beat: "scoreboard", ...epoch.scoreboard },
+        { beat: "results", wins: epoch.wins.map((w) => ({ factoryId: w.factoryId, finderCents: w.finderCents })), pot: epoch.pot, payouts: epoch.payouts },
+        { beat: "burn", cents: epoch.burn.cents, status: burn?.status ?? (epoch.burn.cents ? "pending" : "none"), txHash: burn?.txHash }
+      ]
+    };
   }
 
   // ------------------------------------------------------------ time-based Qi rewards from the period pool

@@ -77,7 +77,10 @@
       "sponsorBps": 2500,
       "contributorsBps": 2500,
       "burnBps": 1000
-    }
+    },
+    "maxAttemptsPerEpoch": 200,
+    "minProvingCoverage": 0.8,
+    "stabilityBasis": "verdict"
   },
   "sponsorship": {
     "returnRateBps": 2000,

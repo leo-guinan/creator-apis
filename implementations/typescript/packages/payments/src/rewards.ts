@@ -33,6 +33,10 @@ export interface Delivery {
   reuseOf?: string;
   /** The cluster this delivery counts in. A delivery counts in at most one cluster. */
   clusterId?: string;
+  /** Hash of the input, so repeated attempts on the same input can be told apart from new ones. */
+  inputHash?: string;
+  /** Why a rejected attempt was rejected. A rejection without a reason doesn't count as learning. */
+  rejectionReason?: string;
 }
 
 export interface Standard { key: string; t0Seconds: number; q0: number; samples: number; source: "network" | "carried" | "declared"; }

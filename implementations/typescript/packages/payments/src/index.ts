@@ -7,3 +7,4 @@ export { createPaymentsServer, signReceipt, type ServerOptions } from "./server.
 export { closeRewardPeriod, computeStandards, defaultRewardConfig, multiplier, durationSeconds, standardKey, rewardPeriodHashValid, validateRewardConfig, type Delivery, type QualitySource, type RewardConfig, type RewardPeriod, type PoolSection, type PoolSchedule, type Standard, type ScoredDelivery } from "./rewards.js";
 export { closeClusterEpoch, clusterEpochHashValid, clusterEpochReconciles, type ClusterEpoch, type ClusterEpochInput, type Win, type WinLine, type WorkshareLine, type Phase } from "./clusters.js";
 export { scoreDeliveries } from "./rewards.js";
+export { closeLifecycleEpoch, lifecycleMetrics, sealProvingSet, lifecycleEpochHashValid, milestoneHashValid, type LifecycleEpoch, type LifecycleInput, type Milestone, type MilestoneKind, type ProvingRun, type ProvingSet, type PressEvidence } from "./lifecycle.js";

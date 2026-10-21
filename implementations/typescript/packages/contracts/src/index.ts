@@ -153,7 +153,7 @@ export interface ClusterCharter {
   name: string;
   effectiveFrom: string;
   previousVersionHash?: string;
-  members: { miners: Array<{ id: string; qiAddress?: string; quaiAddress?: string }>; factories: Array<{ factoryId: string; creatorId: string; sponsors: string[] }> };
+  members: { miners: Array<{ id: string; qiAddress?: string; quaiAddress?: string }>; factories: Array<{ factoryId: string; creatorId: string; sponsors: string[]; parentFactoryId?: string }> };
   admission: { mode: "open" | "invite" | "stake" | "vote"; minStakeQiBase?: number; approvalBps?: Bps };
   exit: { noticeEpochs: number };
   epochs: { ignition: string; online: string; production: string; mature: string };
@@ -165,6 +165,9 @@ export interface ClusterCharter {
     lindy: { epochs: number; bountyQiBase: number };
     lineage: { bountyQiBase: number };
     bountySplit: { factoryBps: Bps; sponsorBps: Bps; contributorsBps: Bps; burnBps: Bps };
+    maxAttemptsPerEpoch?: number;
+    minProvingCoverage?: number;
+    stabilityBasis?: "verdict" | "output_hash";
   };
   sponsorship: { returnRateBps: Bps; paybackMultiple: number; stages: { beforePayback: SplitStage; afterPayback: SplitStage; mature: SplitStage }; burnCurve: { baseBps: Bps; bpsPerDoubling: Bps; maxBps: Bps }; demandSubsidy: boolean };
   revenueMining: { setAsideBps: Bps; burnBps: Bps; finderBps: Bps; workshareWindowEpochs: number; minTenureEpochs: number; perFactoryCapBps?: Bps; noWinDecayEpochs?: number };
@@ -192,6 +195,7 @@ export function validateClusterCharter(c: ClusterCharter): string[] {
   const factories = new Set<string>();
   for (const f of c.members?.factories ?? []) { if (factories.has(f.factoryId)) e.push(`duplicate factory ${f.factoryId}`); factories.add(f.factoryId); for (const s of f.sponsors) if (!miners.has(s)) e.push(`factory ${f.factoryId} names sponsor ${s}, who is not a member miner`); }
   if (!miners.size && !factories.size) e.push("a cluster needs at least one member");
+  for (const f of c.members?.factories ?? []) if (f.parentFactoryId && (f.parentFactoryId === f.factoryId || !factories.has(f.parentFactoryId))) e.push(`factory ${f.factoryId} names parent ${f.parentFactoryId}, which is not another member factory`);
   if (!c.quality?.acceptedSources?.length) e.push("at least one independent quality source is required");
   if (c.quality?.acceptedSources?.includes("self")) e.push("invariant: self-graded quality can never count");
   const sum = (o: Record<string, unknown>, keys: string[]) => keys.reduce((t, k) => t + Number(o[k] ?? 0), 0);

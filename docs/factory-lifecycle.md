@@ -1,6 +1,6 @@
 # Factory lifecycle: sponsorship, mining of revenue, and graduation
 
-**Status:** partly built. The time-based Qi pool ([`operator-rewards.md`](operator-rewards.md)), cluster charters and cluster epochs are implemented; the lifecycle, graduations and sponsorship are still spec. See "Built vs not" at the end. Everything here builds on it. All numbers are placeholders to argue over, not decisions.
+**Status:** mostly built. The time-based Qi pool ([`operator-rewards.md`](operator-rewards.md)), cluster charters, cluster epochs, the lifecycle and graduations are implemented. Sponsorship splits and the token contract are still spec. See "Built vs not" at the end. Everything here builds on it. All numbers are placeholders to argue over, not decisions.
 
 A new factory has a double problem: nobody trusts it, and it isn't producing enough to learn. This spec covers how a miner bootstraps a factory through that period, how a cluster of factories shares lumpy revenue the way a mining pool shares blocks, and how the network celebrates a factory coming of age, publicly and checkably, so others want to play and win.
 
@@ -259,13 +259,19 @@ Each is sealed (sha256 of sorted-key JSON), chained to its predecessor, and dete
 5. **Payback valuation:** Qi→QUAI rate at payment time versus at payback time.
 6. **Burn destination:** a canonical unspendable QUAI address, or derive and publish one.
 
+## Charter settings for the lifecycle
+
+`lifecycle.maxAttemptsPerEpoch` caps the attempts that count. `lifecycle.minProvingCoverage` (default 0.8) is the share of the proving set that must be rerun for stability to be measured. `lifecycle.stabilityBasis` is `verdict` by default, meaning reruns agree on pass/fail, which suits generative work; `output_hash` requires identical outputs, for deterministic work. A member factory can name a `parentFactoryId`; the parent earns the Lineage bounty when the child reaches Steady State.
+
 ## Built vs not
 
 | Piece | Status |
 |---|---|
 | Standards, speed curve, time-based Qi pool with sections, sealed periods | Built (`rewards.ts`) |
 | Operation receipts with energy, press conferences, story drafts | Built (Internet Factories) |
-| Lifecycle epochs, proving sets, graduations | Not built |
+| Lifecycle epochs: attempts that count, proving-set stability (verdict or output-hash agreement, coverage), phases with regression and recovery | Built (`lifecycle.ts`, `closeLifecycleEpoch`) |
+| Graduations: First Light, Steady State, Lindy, Lineage; bounties split exactly between factory, sponsors, contributors (by workshare) and burn, paid in Qi | Built |
+| Full epoch close, verified press records as evidence, lifecycle scoreboard metrics, ritual agenda | Built (`closeEpoch`, `/v1/clusters/:id/close`, `/agenda`) |
 | Sponsorship records and splits | Not built |
 | Cluster charter: schema and validator for the invariants | Built (`contracts/cluster-charter.v1.schema.json`, `validateClusterCharter`) |
 | Cluster epochs: finder share, trailing-window workshares, tenure, no-win decay, per-factory cap, repeat-customer rule, rollover, burn, sealed chain | Built (`clusters.ts`, `closeClusterEpoch`) |

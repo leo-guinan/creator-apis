@@ -42,7 +42,7 @@ export interface ClusterEpoch {
   payouts: Array<{ factoryId: string; creatorId: string; finderCents: number; potCents: number; totalCents: number }>;
   burn: { cents: number; schedule: "per_epoch" | "ritual" };
   /** The standard outcome metrics every cluster publishes. null = not measurable from this epoch's inputs yet. */
-  scoreboard: { acceptedOutcomes: number; acceptedOutcomesPerDollar: number | null; costPerAcceptedOutcomeCents: number | null; burnCents: number; winCount: number; activeFactories: number; timeToFirstLight: null; timeToSteadyState: null; survivalRate: null };
+  scoreboard: { acceptedOutcomes: number; acceptedOutcomesPerDollar: number | null; costPerAcceptedOutcomeCents: number | null; burnCents: number; winCount: number; activeFactories: number; timeToFirstLightDays: number | null; timeToSteadyStateDays: number | null; survivalRate: number | null };
   previousEpochId?: string;
   previousEpochHash?: string;
   hash: string;
@@ -61,6 +61,8 @@ export interface ClusterEpochInput {
   phases?: Record<string, Phase>;
   /** Cost of each delivery, if known, for the scoreboard. */
   costCents?: Record<string, number>;
+  /** From the lifecycle engine; null until measured. */
+  lifecycleMetrics?: { timeToFirstLightDays: number | null; timeToSteadyStateDays: number | null; survivalRate: number | null };
 }
 
 const bps = (amount: number, b: number) => Math.floor((amount * b) / 10_000);
@@ -152,7 +154,7 @@ export function closeClusterEpoch(input: ClusterEpochInput): ClusterEpoch {
     wins: winLines, workshares, deliveryIds: deliveries.map((d) => d.id), excluded,
     pot: { fromWinsCents: fromWins, rolloverInCents: rolloverIn, distributedCents: distributed, rolloverOutCents: budget - distributed },
     payouts, burn: { cents: burnCents, schedule: c.token?.burnSchedule ?? "ritual" },
-    scoreboard: { acceptedOutcomes: accepted, acceptedOutcomesPerDollar: costKnown && totalCost > 0 ? accepted / (totalCost / 100) : null, costPerAcceptedOutcomeCents: costKnown && accepted > 0 ? totalCost / accepted : null, burnCents, winCount: winLines.length, activeFactories: workshares.filter((w) => w.epochScore > 0 || wonNow.has(w.factoryId)).length, timeToFirstLight: null, timeToSteadyState: null, survivalRate: null },
+    scoreboard: { acceptedOutcomes: accepted, acceptedOutcomesPerDollar: costKnown && totalCost > 0 ? accepted / (totalCost / 100) : null, costPerAcceptedOutcomeCents: costKnown && accepted > 0 ? totalCost / accepted : null, burnCents, winCount: winLines.length, activeFactories: workshares.filter((w) => w.epochScore > 0 || wonNow.has(w.factoryId)).length, timeToFirstLightDays: input.lifecycleMetrics?.timeToFirstLightDays ?? null, timeToSteadyStateDays: input.lifecycleMetrics?.timeToSteadyStateDays ?? null, survivalRate: input.lifecycleMetrics?.survivalRate ?? null },
     previousEpochId: last?.epoch.id, previousEpochHash: last?.hash
   };
   const clean = JSON.parse(JSON.stringify(body)) as Omit<ClusterEpoch, "hash">;
